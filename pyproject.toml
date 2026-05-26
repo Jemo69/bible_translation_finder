@@ -1,0 +1,12 @@
+[project]
+name = "bible-translation-maker"
+version = "0.1.0"
+description = "Download and convert Bible translations to OpenSong XML format"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "requests>=2.31.0",
+]
+
+[project.scripts]
+btm = "src.btm.cli:run_cli"
