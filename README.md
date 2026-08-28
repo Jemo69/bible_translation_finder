@@ -41,7 +41,7 @@ python main.py download eng-web -o ./my_bibles
 python main.py batch --ids KJV,WEB,ASV
 ```
 
-Translation IDs: KJV, WEB, ASV, BBE, DARBY, DRA, YLT, OEB-US, OEB-CW, WEBBE, RV1909, BES, LUT1912, ALM, OST, RUS, CUV, BSB, FBV, LSV, GNV, TPT, PTP, NIV (stub), ESV (stub), NLT (stub), NKJV (stub), CSB (stub), NASB (stub), NRSV (stub).
+Translation IDs: KJV, WEB, ASV, BBE, DARBY, DRA, YLT, OEB-US, OEB-CW, WEBBE, RV1909, BES, LUT1912, ALM, OST, RUS, CUV, BSB, FBV, LSV, GNV, TPT, PTP, NIV, ESV (stub), NLT (stub), NKJV (stub), CSB (stub), NASB (stub), NRSV (stub).
 
 ## Output
 
@@ -63,8 +63,8 @@ Files are saved in OpenSong XML format:
 |---|---|---|
 | [Open Bibles](https://github.com/seven1m/open-bibles) (GitHub) | OSIS, Zefania | KJV, WEB, ASV, BBE, DARBY, DRA, YLT, OEB-US, OEB-CW, WEBBE, RV1909, BES, LUT1912, ALM, OST, RUS, CUV, BSB, FBV, LSV, GNV, PTP |
 | [eBible.org](https://ebible.org) | USFX | 50,000+ translations via catalog search |
-| [YouVersion](https://bible.com) | Web scrape | The Passion Translation (TPT) |
+| [YouVersion](https://bible.com) | Web scrape | NIV, The Passion Translation (TPT) |
 
 ## License
 
-This tool is for personal use. Respect the copyright terms of each translation — copyrighted works (NIV, ESV, etc.) produce stub files only.
+This tool is for personal use. Respect the copyright terms of each translation — NIV and TPT are downloaded from bible.com for personal use only; other copyrighted works (ESV, NLT, etc.) produce stub files only.

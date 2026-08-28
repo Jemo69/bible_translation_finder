@@ -119,8 +119,13 @@ def _download_translation(t: dict) -> Optional[str]:
     source_format = t.get("source_format")
 
     if source_type == "youversion":
+        version_id = t.get("youversion_id")
+        books = scraper.YOUVERSION_BOOKS.get(t.get("youversion_books"))
+        if not version_id or not books:
+            raise ValueError(f"No YouVersion config for {t['abbreviation']}")
         print(f"  Downloading from YouVersion (bible.com)...")
-        opensong_xml = scraper.download_youversion_tpt()
+        print(f"  {sum(books.values())} chapters, this takes several minutes...")
+        opensong_xml = scraper.download_youversion(version_id, books, t["name"])
         return opensong_xml
     elif source_type == "open-bibles" and source_url:
         filename = source_url.rstrip("/").split("/")[-1]

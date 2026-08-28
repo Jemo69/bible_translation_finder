@@ -1,9 +1,12 @@
 import csv
+import hashlib
 import io
 import json
 import os
 import re
+import string
 import tempfile
+import time
 import xml.etree.ElementTree as ET
 import zipfile
 from typing import Optional
@@ -107,7 +110,7 @@ def get_ebible_translation_details(translation_id: str) -> Optional[dict]:
     return None
 
 
-# USFM book codes and chapter counts for TPT (51 books)
+# USFM book codes and chapter counts
 TPT_BOOKS = {
     "GEN": 50, "JOS": 24, "JDG": 21, "RUT": 4,
     "PSA": 150, "PRO": 31, "SNG": 8,
@@ -119,6 +122,27 @@ TPT_BOOKS = {
     "PHP": 4, "COL": 4, "1TH": 5, "2TH": 3, "1TI": 6, "2TI": 4,
     "TIT": 3, "PHM": 1, "HEB": 13, "JAS": 5, "1PE": 5, "2PE": 3,
     "1JN": 5, "2JN": 1, "3JN": 1, "JUD": 1, "REV": 22,
+}
+
+NIV_BOOKS = {
+    "GEN": 50, "EXO": 40, "LEV": 27, "NUM": 36, "DEU": 34,
+    "JOS": 24, "JDG": 21, "RUT": 4, "1SA": 31, "2SA": 24,
+    "1KI": 22, "2KI": 25, "1CH": 29, "2CH": 36, "EZR": 10,
+    "NEH": 13, "EST": 10, "JOB": 42, "PSA": 150, "PRO": 31,
+    "ECC": 12, "SNG": 8, "ISA": 66, "JER": 52, "LAM": 5,
+    "EZK": 48, "DAN": 12, "HOS": 14, "JOL": 3, "AMO": 9,
+    "OBA": 1, "JON": 4, "MIC": 7, "NAM": 3, "HAB": 3,
+    "ZEP": 3, "HAG": 2, "ZEC": 14, "MAL": 4,
+    "MAT": 28, "MRK": 16, "LUK": 24, "JHN": 21, "ACT": 28,
+    "ROM": 16, "1CO": 16, "2CO": 13, "GAL": 6, "EPH": 6,
+    "PHP": 4, "COL": 4, "1TH": 5, "2TH": 3, "1TI": 6, "2TI": 4,
+    "TIT": 3, "PHM": 1, "HEB": 13, "JAS": 5, "1PE": 5, "2PE": 3,
+    "1JN": 5, "2JN": 1, "3JN": 1, "JUD": 1, "REV": 22,
+}
+
+YOUVERSION_BOOKS = {
+    "tpt": TPT_BOOKS,
+    "niv": NIV_BOOKS,
 }
 _BIBLE_ORDER = {
     "Genesis": 1, "Exodus": 2, "Leviticus": 3, "Numbers": 4, "Deuteronomy": 5,
@@ -136,78 +160,145 @@ _BIBLE_ORDER = {
     "James": 59, "1 Peter": 60, "2 Peter": 61, "1 John": 62, "2 John": 63,
     "3 John": 64, "Jude": 65, "Revelation": 66,
 }
-TPT_VERSION_ID = "1849"
 TPT_BASE_URL = "https://www.bible.com/bible/{version_id}/{usfm}"
 TPT_USER_AGENT = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36"
 
 
-def _parse_tpt_chapter(html: str) -> dict:
-    """Parse verse text from bible.com chapter page HTML using BeautifulSoup."""
-    m = re.search(r'<script id="__NEXT_DATA__"[^>]*>(.*?)</script>', html, re.DOTALL)
-    if not m:
-        return {}
-    data = json.loads(m.group(1))
-    content = data.get("props", {}).get("pageProps", {}).get("chapterInfo", {}).get("content", "")
-    if not content:
-        return {}
+def _solve_pow(base: str, target: str) -> Optional[str]:
+    """Solve Fastly's 2-character SHA-256 proof-of-work."""
+    for c1 in string.ascii_letters + string.digits:
+        for c2 in string.ascii_letters + string.digits:
+            if hashlib.sha256((base + c1 + c2).encode("ascii")).hexdigest() == target:
+                return c1 + c2
+    return None
 
-    soup = BeautifulSoup(content, "html.parser")
-    verses = {}
-    for verse_div in soup.find_all("span", class_=re.compile(r"verse v\d+")):
-        cls = verse_div.get("class", [])
-        vnum = None
-        for c in cls:
-            m2 = re.match(r"v(\d+)", c)
-            if m2:
-                vnum = m2.group(1)
-                break
-        if not vnum:
+
+def _solve_fastly_challenge(session: "requests.Session", page_html: str) -> bool:
+    """Solve a Fastly Client Challenge page for this session.
+    Returns True if the challenge was solved (a follow-up request should succeed).
+    """
+    marker = "script.js?reload=true"
+    i = page_html.find(marker)
+    if i < 0:
+        return False
+    dir_slash = page_html.rfind("/", 0, page_html.rfind("/", 0, i))
+    script_path = page_html[dir_slash:i + len(marker)]
+    prefix = "/" + script_path.split("/", 2)[1]
+    script_resp = session.get("https://www.bible.com" + script_path, headers={"Referer": "https://www.bible.com/"}, timeout=30)
+    script_resp.raise_for_status()
+    m2 = re.search(r'init\(\[[^]]*?\],\s*"([^"]+)"', script_resp.text, re.DOTALL)
+    if not m2:
+        return False
+    token = m2.group(1)
+    m3 = re.search(r'init\((\[[^]]*?\]),\s*"', script_resp.text, re.DOTALL)
+    if not m3:
+        return False
+    try:
+        challenges = json.loads(m3.group(1))
+    except ValueError:
+        return False
+    data = []
+    for ch in challenges:
+        if ch.get("ty") != "pow":
+            return False
+        d = ch["data"]
+        answer = _solve_pow(d["base"], d["hash"])
+        if not answer:
+            return False
+        data.append({
+            "ty": "pow",
+            "base": d["base"],
+            "answer": answer,
+            "hmac": d["hmac"],
+            "expires": d["expires"],
+        })
+    resp = session.post(
+        "https://www.bible.com" + prefix + "/fst-post-back",
+        json={"token": token, "data": data},
+        timeout=30,
+    )
+    resp.raise_for_status()
+    return True
+
+
+def _youversion_get(session: "requests.Session", url: str) -> "requests.Response":
+    """GET a bible.com URL, solving the Fastly Client Challenge if served."""
+    resp = session.get(url, timeout=30)
+    if b"Client Challenge" in resp.content[:4000]:
+        if not _solve_fastly_challenge(session, resp.text):
+            raise ValueError("Unable to solve bible.com client challenge")
+        time.sleep(1)
+        resp = session.get(url, timeout=30)
+    return resp
+
+
+def _parse_youversion_chapter(html: str) -> dict:
+    """Parse verse text from bible.com chapter page HTML (server-rendered).
+
+    Verses are <span> elements with a data-usfm attribute like "GEN.1.1",
+    containing label, content, and note child spans. Note text is excluded.
+    """
+    soup = BeautifulSoup(html, "html.parser")
+    verses: dict[str, list[str]] = {}
+    for verse_span in soup.find_all("span", class_=re.compile(r"__verse")):
+        usfm = verse_span.get("data-usfm", "")
+        if not usfm:
             continue
-
-        # Remove footnote elements entirely (they have class "note")
-        for note in verse_div.find_all("span", class_="note"):
-            note.decompose()
-
-        # Remove label elements (verse number)
-        for label in verse_div.find_all("span", class_="label"):
-            label.decompose()
-
-        full_text = verse_div.get_text(separator=" ", strip=True)
-        full_text = re.sub(r"\s+", " ", full_text).strip()
-        if full_text:
-            verses[vnum] = full_text
-
-    return verses
+        parts = []
+        for content in verse_span.find_all("span", class_=re.compile(r"__content")):
+            if content.find_parent("span", class_=re.compile(r"__note")):
+                continue
+            text = content.get_text()
+            if text:
+                parts.append(text)
+        full_text = re.sub(r"\s+", " ", " ".join(parts)).strip()
+        if not full_text:
+            continue
+        vnum = usfm.split(".")[-1]
+        verses.setdefault(vnum, []).append(full_text)
+    return {vnum: " ".join(parts) for vnum, parts in verses.items()}
 
 
-def download_youversion_tpt() -> Optional[str]:
-    """Download The Passion Translation (TPT) from YouVersion bible.com.
+def download_youversion(version_id: str, books: dict, bible_name: str) -> Optional[str]:
+    """Download a Bible version from YouVersion bible.com.
     Returns XML string in OpenSong format.
     """
     all_books = {}
     session = requests.Session()
     session.headers.update({"User-Agent": TPT_USER_AGENT})
+    failed: list[str] = []
 
-    for usfm_code, chapters in TPT_BOOKS.items():
+    for usfm_code, chapters in books.items():
         book_verses = {}
         for ch in range(1, chapters + 1):
-            url = TPT_BASE_URL.format(version_id=TPT_VERSION_ID, usfm=f"{usfm_code}.{ch}")
-            try:
-                resp = session.get(url, timeout=30)
-                resp.raise_for_status()
-                verses = _parse_tpt_chapter(resp.text)
+            url = TPT_BASE_URL.format(version_id=version_id, usfm=f"{usfm_code}.{ch}")
+            verses = None
+            for attempt in range(3):
+                try:
+                    resp = _youversion_get(session, url)
+                    resp.raise_for_status()
+                    verses = _parse_youversion_chapter(resp.text)
+                except Exception:
+                    pass
                 if verses:
-                    book_verses[str(ch)] = verses
-            except Exception:
-                pass
+                    break
+                time.sleep(2)
+            if verses:
+                book_verses[str(ch)] = verses
+            else:
+                failed.append(f"{usfm_code}.{ch}")
+            time.sleep(0.3)
         if book_verses:
             all_books[usfm_code] = book_verses
+
+    if failed:
+        print(f"  Warning: {len(failed)} chapters failed: {', '.join(failed[:10])}{'...' if len(failed) > 10 else ''}")
 
     if not all_books:
         return None
 
     # Convert to OpenSong XML
-    from .converter import book_alias_to_name, make_opensong_element
+    from .converter import book_alias_to_name
     books_data = {}
     for usfm_code, chapters in all_books.items():
         bname = book_alias_to_name(usfm_code)
@@ -217,7 +308,7 @@ def download_youversion_tpt() -> Optional[str]:
     if not books_data:
         return None
 
-    root = ET.Element("bible", {"name": "The Passion Translation"})
+    root = ET.Element("bible", {"name": bible_name})
     for bname in sorted(books_data.keys(), key=lambda x: _BIBLE_ORDER.get(x, 999)):
         book_num = _BIBLE_ORDER.get(bname, 0)
         chapters = books_data[bname]
