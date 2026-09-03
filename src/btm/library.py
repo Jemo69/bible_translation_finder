@@ -1,7 +1,7 @@
 """Local library: download, cache, and load Bible translations.
 
 A :class:`Library` keeps downloaded OpenSong XML files in a data directory
-(``~/.local/share/bible-translation-maker`` by default, overridable with the
+(``~/.local/share/bible-translation-finder`` by default, overridable with the
 ``BTM_DATA_DIR`` environment variable or an explicit path) and loads them as
 :class:`btm.bible.Bible` objects with an in-memory cache, so API servers,
 GUIs, and TUIs can share one simple interface::
@@ -28,7 +28,7 @@ def default_data_dir() -> Path:
     env = os.environ.get("BTM_DATA_DIR", "").strip()
     if env:
         return Path(env).expanduser()
-    return Path.home() / ".local" / "share" / "bible-translation-maker"
+    return Path.home() / ".local" / "share" / "bible-translation-finder"
 
 
 def translation_filename(t: dict) -> str:

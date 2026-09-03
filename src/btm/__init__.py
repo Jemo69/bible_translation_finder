@@ -1,4 +1,4 @@
-"""bible-translation-maker: find and read Bible verses in Python.
+"""bible_translation_finder: find and read Bible verses in Python.
 
 Library usage (for API servers, GUIs, TUIs)::
 

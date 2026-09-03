@@ -20,14 +20,14 @@ for hit in btm.find("everlasting", translation="KJV", limit=5):
 Requires Python 3.10+.
 
 ```bash
-pip install bible-translation-maker
+pip install bible_translation_finder
 ```
 
 From source:
 
 ```bash
-git clone https://github.com/Jemo69/bible-translation-maker.git
-cd bible-translation-maker
+git clone https://github.com/Jemo69/bible_translation_finder.git
+cd bible_translation_finder
 pip install -e ".[dev]"  # or: uv sync
 ```
 
@@ -57,7 +57,7 @@ References accept full names and abbreviations (`"Gen 1:1"`, `"Ps 23"`, `"1 Cor 
 
 ### Where data lives
 
-Downloads are cached as OpenSong XML in `~/.local/share/bible-translation-maker`
+Downloads are cached as OpenSong XML in `~/.local/share/bible-translation-finder`
 (override with the `BTM_DATA_DIR` env var or `btm.load("KJV", data_dir=...)`).
 Any device with this package regenerates the same files on first use — the
 `output/` directory is just a local cache and is not part of the repo.

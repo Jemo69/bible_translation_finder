@@ -270,7 +270,7 @@ def run_cli():
     p_get = sub.add_parser("get", help='Look up a passage, e.g. btm get "John 3:16"')
     p_get.add_argument("reference", help='Bible reference, e.g. "John 3:16", "Ps 23:1-3"')
     p_get.add_argument("-t", "--translation", default="KJV", help="Translation abbreviation or id (default: KJV)")
-    p_get.add_argument("--data-dir", default=None, help="Library data directory (default: ~/.local/share/bible-translation-maker)")
+    p_get.add_argument("--data-dir", default=None, help="Library data directory (default: ~/.local/share/bible-translation-finder)")
 
     p_find = sub.add_parser("find", help="Search verse text, e.g. btm find love --translation WEB")
     p_find.add_argument("query", help="Text to search for")

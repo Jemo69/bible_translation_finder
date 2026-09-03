@@ -3,7 +3,7 @@ requires = ["setuptools>=61"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "bible-translation-maker"
+name = "bible_translation_finder"
 version = "0.2.0"
 description = "Find Bible verses and convert Bible translations to OpenSong XML — a library for API servers, GUIs, and TUIs"
 readme = "README.md"
@@ -31,8 +31,8 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/Jemo69/bible-translation-maker"
-Repository = "https://github.com/Jemo69/bible-translation-maker"
+Homepage = "https://github.com/Jemo69/bible_translation_finder"
+Repository = "https://github.com/Jemo69/bible_translation_finder"
 
 [project.scripts]
 btm = "btm.cli:run_cli"

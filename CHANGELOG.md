@@ -2,7 +2,7 @@
 
 ## v0.2.0
 
-First release as a Python package. `pip install bible-translation-maker`,
+First release as a Python package. `pip install bible_translation_finder`,
 then `import btm` in an API server, GUI, or TUI.
 
 ### Library API (new)
@@ -12,7 +12,7 @@ then `import btm` in an API server, GUI, or TUI.
 - `Bible`, `Passage`, `Verse`, `Reference`, and `Library` classes
 - Reference parsing: full names and abbreviations, ranges (`1 Cor 13:4-7`),
   whole chapters (`Ps 23`) and books (`Jude`)
-- Translations download on first use into `~/.local/share/bible-translation-maker`
+- Translations download on first use into `~/.local/share/bible-translation-finder`
   (override with `BTM_DATA_DIR`), then load from local cache
 
 ### Translations: ~30 → 98 entries, 39 languages
