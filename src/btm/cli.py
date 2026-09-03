@@ -1,5 +1,6 @@
 import os
 import sys
+from pathlib import Path
 from typing import Optional
 
 from . import catalog
@@ -24,6 +25,8 @@ def format_table(rows: list[list[str]], headers: list[str]) -> str:
 
 def cmd_list(args):
     translations = catalog.get_catalog()
+    if not getattr(args, "all", False):
+        translations = [t for t in translations if t["freely_available"]]
     rows = []
     for t in sorted(translations, key=lambda x: x.get("popularity_rank", 99)):
         avail = "Yes" if t["freely_available"] else "No (copyrighted)"
@@ -41,16 +44,76 @@ def cmd_list(args):
 
 def cmd_search(args):
     query = args.query
-    results = scraper.search_ebible_catalog(query=query)
+    # Offline catalog search first (fast, no network).
+    local = catalog.search_catalog(query)
+    if local:
+        rows = [[t["abbreviation"], t["name"], t["language"]] for t in local[:30]]
+        print(f"Found {len(local)} translations in the local catalog (showing up to 30):")
+        print()
+        print(format_table(rows, ["Abbrev", "Name", "Language"]))
+        print()
+    # Then the full eBible.org online catalog.
+    try:
+        results = scraper.search_ebible_catalog(query=query)
+    except Exception as e:
+        print(f"Online eBible.org search failed: {e}")
+        print("Tip: every local result above can be fetched with 'btm download <Abbrev>'.")
+        return
     rows = []
     for r in results[:50]:
         rows.append([r["id"], r["title"], r["language"], r["copyright"][:40]])
     if not rows:
-        print("No results found.")
+        print("No further results on eBible.org.")
         return
     print(f"Found {len(results)} translations on eBible.org (showing up to 50):")
     print()
     print(format_table(rows, ["ID", "Title", "Language", "Copyright"]))
+
+
+def cmd_get(args):
+    """Print one passage: btm get "John 3:16" --translation KJV."""
+    from .library import Library
+
+    lib = Library(getattr(args, "data_dir", None) or None)
+    try:
+        bible = lib.load(args.translation)
+    except KeyError as e:
+        print(e)
+        return
+    except FileNotFoundError as e:
+        print(e)
+        return
+    try:
+        passage = bible.get_passage(args.reference)
+    except (ValueError, KeyError) as e:
+        print(f"Error: {e}")
+        return
+    print(f"{passage.reference} ({bible.translation})")
+    for v in passage.verses:
+        print(f"{v.verse} {v.text}")
+
+
+def cmd_find(args):
+    """Search verse texts: btm find love --translation WEB --limit 10."""
+    from .library import Library
+
+    lib = Library(getattr(args, "data_dir", None) or None)
+    try:
+        bible = lib.load(args.translation)
+    except (KeyError, FileNotFoundError) as e:
+        print(e)
+        return
+    try:
+        hits = bible.search(args.query, limit=args.limit)
+    except ValueError as e:
+        print(f"Error: {e}")
+        return
+    if not hits:
+        print("No matches found.")
+        return
+    print(f"Found {len(hits)} match(es) in {bible.translation}:")
+    for v in hits:
+        print(f"  {v.reference} — {v.text[:160]}")
 
 
 def cmd_download(args):
@@ -194,15 +257,26 @@ def run_cli():
     import argparse
 
     parser = argparse.ArgumentParser(
-        description="Bible Translation Maker - Download and convert Bible translations to OpenSong XML format"
+        description="Bible Translation Maker - find Bible verses and convert translations to OpenSong XML"
     )
     sub = parser.add_subparsers(dest="command")
 
     p_list = sub.add_parser("list", help="List available translations in the catalog")
     p_list.add_argument("--all", action="store_true", help="Show all translations including copyrighted")
 
-    p_search = sub.add_parser("search", help="Search eBible.org for translations")
+    p_search = sub.add_parser("search", help="Search for translations (local catalog + eBible.org)")
     p_search.add_argument("query", help="Search query (translation name, language, or ID)")
+
+    p_get = sub.add_parser("get", help='Look up a passage, e.g. btm get "John 3:16"')
+    p_get.add_argument("reference", help='Bible reference, e.g. "John 3:16", "Ps 23:1-3"')
+    p_get.add_argument("-t", "--translation", default="KJV", help="Translation abbreviation or id (default: KJV)")
+    p_get.add_argument("--data-dir", default=None, help="Library data directory (default: ~/.local/share/bible-translation-maker)")
+
+    p_find = sub.add_parser("find", help="Search verse text, e.g. btm find love --translation WEB")
+    p_find.add_argument("query", help="Text to search for")
+    p_find.add_argument("-t", "--translation", default="KJV", help="Translation abbreviation or id (default: KJV)")
+    p_find.add_argument("--limit", type=int, default=20, help="Maximum matches (default: 20)")
+    p_find.add_argument("--data-dir", default=None, help="Library data directory")
 
     p_download = sub.add_parser("download", help="Download a specific translation")
     p_download.add_argument("translation_id", help="Translation ID or abbreviation (e.g., 'KJV', 'eng-web')")
@@ -219,6 +293,10 @@ def run_cli():
         cmd_list(args)
     elif args.command == "search":
         cmd_search(args)
+    elif args.command == "get":
+        cmd_get(args)
+    elif args.command == "find":
+        cmd_find(args)
     elif args.command == "download":
         cmd_download(args)
     elif args.command == "batch":

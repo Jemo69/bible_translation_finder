@@ -57,6 +57,18 @@ BOOK_ALIASES = {
     "GEN": "Genesis", "DEUT": "Deuteronomy", "NUM": "Numbers",
     "SONG OF SOL": "Song of Solomon", "SONGOFSOL": "Song of Solomon",
     "PS": "Psalms", "PSS": "Psalms",
+    # Singular / common spelling variants
+    "PSALM": "Psalms", "PROVERB": "Proverbs",
+    "SONG OF SONGS": "Song of Solomon",
+    "CANTICLES": "Song of Solomon", "CANTICLE OF CANTICLES": "Song of Solomon",
+    "1 SAMUEL": "1 Samuel", "2 SAMUEL": "2 Samuel",
+    "1 KINGS": "1 Kings", "2 KINGS": "2 Kings",
+    "1 CHRONICLES": "1 Chronicles", "2 CHRONICLES": "2 Chronicles",
+    "1 CORINTHIANS": "1 Corinthians", "2 CORINTHIANS": "2 Corinthians",
+    "1 THESSALONIANS": "1 Thessalonians", "2 THESSALONIANS": "2 Thessalonians",
+    "1 TIMOTHY": "1 Timothy", "2 TIMOTHY": "2 Timothy",
+    "1 PETER": "1 Peter", "2 PETER": "2 Peter",
+    "1 JOHN": "1 John", "2 JOHN": "2 John", "3 JOHN": "3 John",
 }
 
 
@@ -72,6 +84,37 @@ def book_alias_to_name(raw: str) -> str:
     return raw_title
 
 
+def _safe_sort_key(value: str):
+    """Sort key for chapter/verse numbers.
+
+    Handles plain integers ("1", "12"), ranges ("1-2"), and
+    suffixed variants ("1a", "3b"). Non-numeric values sort last.
+    """
+    s = str(value).strip()
+    if not s:
+        return (1, 0, "")
+    # Leading integer part (handles "3-4", "1a", etc.)
+    num_str = ""
+    for ch in s:
+        if ch.isdigit():
+            num_str += ch
+        else:
+            break
+    if num_str:
+        try:
+            return (0, int(num_str), s)
+        except ValueError:
+            pass
+    return (1, 0, s)
+
+
+def _clean_verse_text(text: str) -> str:
+    """Collapse whitespace in verse text."""
+    import re as _re
+
+    return _re.sub(r"\s+", " ", (text or "")).strip()
+
+
 def make_opensong_element(book_name: str, chapters: dict) -> ET.Element:
     bible = ET.Element("bible")
     book_num = BIBLE_BOOKS.index(book_name) + 1 if book_name in BIBLE_BOOKS else 0
@@ -85,7 +128,159 @@ def make_opensong_element(book_name: str, chapters: dict) -> ET.Element:
     return bible
 
 
+def convert_usfx_to_opensong(xml_content: str) -> Optional[str]:
+    """Convert USFX XML to OpenSong XML string.
+
+    USFX structure (eBible / open-bibles):
+      <usfx><book id="GEN">...<c id="1"/>...<v id="1"/>text<ve/>...
+    Footnotes (<f>), cross-refs (<x>), and formatting (<wj>, <nd>, ...)
+    are stripped; only verse text is kept.
+    """
+    # Strip BOM if present (some Zefania/USFX files start with one)
+    if xml_content.startswith("\ufeff"):
+        xml_content = xml_content.lstrip("\ufeff")
+    try:
+        root = ET.fromstring(xml_content)
+    except ET.ParseError as e:
+        raise ValueError(f"Failed to parse USFX XML: {e}")
+
+    books_data: dict[str, dict[str, dict[str, str]]] = {}
+
+    # USFX may or may not use namespaces; match by local name.
+    def _local(tag: str) -> str:
+        return tag.split("}")[-1] if "}" in tag else tag
+
+    for book_elem in root.iter():
+        if _local(book_elem.tag) != "book":
+            continue
+        book_id = (book_elem.get("id") or "").strip()
+        if not book_id or book_id in ("FRT", "BAK", "INT", "CNC", "GLO", "TDX", "NDX"):
+            continue
+        bname = book_alias_to_name(book_id)
+        if bname not in BIBLE_BOOKS:
+            continue
+        chapters = _extract_usfx_book(book_elem)
+        if chapters:
+            # Merge (NT-only or partial books are fine)
+            if bname in books_data:
+                for cnum, verses in chapters.items():
+                    books_data[bname].setdefault(cnum, {}).update(verses)
+            else:
+                books_data[bname] = chapters
+
+    if not books_data:
+        return None
+
+    root_os = ET.Element("bible")
+    for bname in BIBLE_BOOKS:
+        if bname in books_data:
+            chapters = books_data[bname]
+            book_num = BIBLE_BOOKS.index(bname) + 1
+            b = ET.SubElement(root_os, "b", {"n": str(book_num), "name": bname})
+            for cnum in sorted(chapters.keys(), key=_safe_sort_key):
+                c = ET.SubElement(b, "c", {"n": str(cnum)})
+                verses = chapters[cnum]
+                for vnum in sorted(verses.keys(), key=_safe_sort_key):
+                    v = ET.SubElement(c, "v", {"n": str(vnum)})
+                    v.text = verses[vnum]
+
+    return ET.tostring(root_os, encoding="unicode")
+
+
+def _extract_usfx_book(book_elem: ET.Element) -> dict:
+    """Recursively walk a USFX <book> element collecting chapters/verses.
+
+    USFX marks chapters/verses with empty milestones:
+      <c id="1"/> ... <v id="1"/>verse text<ve/> ...
+    Verse text may be split across paragraphs and contain inline
+    formatting (<wj>, <nd>, <add>, ...). Footnotes (<f>), cross-refs
+    (<x>), and front-matter (<toc>, <h>, <id>, ...) are excluded, but
+    text *after* them (their tail) is kept.
+    """
+    chapters: dict[str, dict[str, str]] = {}
+    current_chapter: Optional[str] = None
+    current_verse: Optional[str] = None
+    parts: list[str] = []
+
+    SKIP_TAGS = {"f", "x", "note", "figure", "toc", "h", "id", "ide", "rem"}
+
+    def _local(tag: str) -> str:
+        return tag.split("}")[-1] if "}" in tag else tag
+
+    def _flush():
+        nonlocal current_verse, parts
+        if current_chapter is not None and current_verse is not None and parts:
+            text = _clean_verse_text("".join(parts))
+            if text:
+                chapters.setdefault(current_chapter, {})
+                existing = chapters[current_chapter].get(current_verse)
+                chapters[current_chapter][current_verse] = (
+                    f"{existing} {text}".strip() if existing else text
+                )
+        current_verse = None
+        parts = []
+
+    def _walk(elem: ET.Element, in_skip: bool):
+        nonlocal current_chapter, current_verse, parts
+        local = _local(elem.tag)
+        now_skip = in_skip or (local in SKIP_TAGS)
+        if local == "c" and not in_skip:
+            _flush()
+            cid = (elem.get("id") or "").strip()
+            if cid:
+                current_chapter = cid
+                chapters.setdefault(current_chapter, {})
+        elif local == "v" and not in_skip:
+            _flush()
+            vid = (elem.get("id") or "").strip()
+            if current_chapter is not None and vid:
+                current_verse = vid
+                parts = []
+        elif local == "ve" and not in_skip:
+            _flush()
+        else:
+            if (
+                not now_skip
+                and current_chapter is not None
+                and current_verse is not None
+                and elem.text
+            ):
+                # Don't double-count text of child verse/chapter markers;
+                # those elements' own text is usually None anyway.
+                if local not in ("c", "v", "ve", "book"):
+                    parts.append(elem.text)
+                elif local in ("p", "q", "wj", "nd", "add", "em", "bd", "it", "sc"):
+                    parts.append(elem.text)
+        for child in list(elem):
+            _walk(child, now_skip)
+            if (
+                not now_skip
+                and current_chapter is not None
+                and current_verse is not None
+                and child.tail
+            ):
+                # Tail after footnotes should be kept; tail after <f>/<x>
+                # is verse text continuing outside the note.
+                parts.append(child.tail)
+        # Handle the book element's own text (usually whitespace)
+        if elem is book_elem and elem.text:
+            pass
+
+    # Seed: iterate children of book so <c>/<v> markers are visited in order.
+    if book_elem.text and False:  # book-level text is never verse text
+        pass
+    for child in list(book_elem):
+        _walk(child, False)
+        # Tail of top-level children outside any verse is ignored unless
+        # we are inside a verse (handled inside _walk via child.tail).
+    _flush()
+    # Drop empty chapters (e.g. front-matter <c> with no verses)
+    return {c: v for c, v in chapters.items() if v}
+
+
 def convert_zefania_to_opensong(xml_content: str) -> Optional[str]:
+    if xml_content.startswith("\ufeff"):
+        xml_content = xml_content.lstrip("\ufeff")
     try:
         root = ET.fromstring(xml_content)
     except ET.ParseError as e:
@@ -172,14 +367,11 @@ def _extract_osis_verse_text(p_element, ns, tag):
                 parts.append(text)
             if tail:
                 parts.append(tail)
-            text = elem.text or ""
-            tail = elem.tail or ""
-            if text:
-                parts.append(text)
-            if tail:
-                parts.append(tail)
     if current_vnum is not None and parts:
-        result[current_vnum] = "".join(parts).strip()
+        result[current_vnum] = _clean_verse_text("".join(parts))
+        # Clean any previously stored values as well
+        for _k in list(result.keys()):
+            result[_k] = _clean_verse_text(result[_k])
     return result
 
 
@@ -191,6 +383,8 @@ def osisID_chapter_num(osis_id: str) -> str:
 
 
 def convert_osis_to_opensong(xml_content: str) -> Optional[str]:
+    if xml_content.startswith("\ufeff"):
+        xml_content = xml_content.lstrip("\ufeff")
     try:
         root = ET.fromstring(xml_content)
     except ET.ParseError as e:

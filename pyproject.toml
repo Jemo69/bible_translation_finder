@@ -1,13 +1,49 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "bible-translation-maker"
-version = "0.1.0"
-description = "Download and convert Bible translations to OpenSong XML format"
+version = "0.2.0"
+description = "Find Bible verses and convert Bible translations to OpenSong XML — a library for API servers, GUIs, and TUIs"
 readme = "README.md"
-requires-python = ">=3.12"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "Jemo69" }]
+keywords = ["bible", "scripture", "opensong", "translations", "verse"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Religion",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Religion",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Typing :: Typed",
+]
 dependencies = [
-    "bs4>=0.0.2",
+    "beautifulsoup4>=4.12",
     "requests>=2.31.0",
 ]
 
+[project.urls]
+Homepage = "https://github.com/Jemo69/bible-translation-maker"
+Repository = "https://github.com/Jemo69/bible-translation-maker"
+
 [project.scripts]
-btm = "src.btm.cli:run_cli"
+btm = "btm.cli:run_cli"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

@@ -1,70 +1,127 @@
 # Bible Translation Maker
 
-Download Bible translations from multiple sources and convert them to OpenSong XML format for use with [OpenSong](https://opensong.org/) worship presentation software.
+A Python package to **find Bible verses and get Bible verses** — 98 translations across 39 languages, with an offline catalog and on-demand downloads.
+
+Build an API server, a local GUI, or a terminal UI on top of one shared library:
+
+```python
+import btm
+
+print(btm.get_verse("John 3:16").text)
+print(btm.get_passage("Ps 23:1-3", translation="LSG").text)   # French Louis Segond
+print(btm.get_verse("John 3:16", translation="KOUGO").text)   # Japanese Colloquial
+
+for hit in btm.find("everlasting", translation="KJV", limit=5):
+    print(hit.reference, "-", hit.text)
+```
 
 ## Installation
 
-Requires Python 3.12+ and [uv](https://docs.astral.sh/uv/).
+Requires Python 3.10+.
 
 ```bash
-git clone <repo-url>
+pip install bible-translation-maker
+```
+
+From source:
+
+```bash
+git clone https://github.com/Jemo69/bible-translation-maker.git
 cd bible-translation-maker
-uv sync
+pip install -e ".[dev]"  # or: uv sync
 ```
 
-## Usage
+## Library usage
 
-### List available translations
+```python
+import btm
+
+# One-shot lookups (first call downloads + caches the translation)
+verse = btm.get_verse("John 3:16-17")          # first verse of the range
+passage = btm.get_passage("1 Cor 13:4-7", translation="WEB")
+chapter = btm.get_chapter("Genesis", 1, translation="LUT1912")
+hits = btm.find("shepherd", translation="KJV", limit=10)  # btm.search works too
+
+# Hold a translation open for repeated queries (best for servers)
+bible = btm.load("KJV")
+bible.get_verse("John", 3, 16).text
+bible.search("grace", books=["Romans", "Ephesians"])
+
+# Browse the catalog offline — no network needed
+btm.find_translations("japanese")              # KOUGO, SHINKAI, JFB
+btm.find_translations(language="Korean")
+btm.list_translations(include_copyrighted=False)
+```
+
+References accept full names and abbreviations (`"Gen 1:1"`, `"Ps 23"`, `"1 Cor 13:4-7"`, `"Jude"`).
+
+### Where data lives
+
+Downloads are cached as OpenSong XML in `~/.local/share/bible-translation-maker`
+(override with the `BTM_DATA_DIR` env var or `btm.load("KJV", data_dir=...)`).
+Any device with this package regenerates the same files on first use — the
+`output/` directory is just a local cache and is not part of the repo.
+
+## CLI usage
 
 ```bash
-python main.py list          # freely available only
-python main.py list --all    # include copyrighted (stub-only)
+btm list                       # freely available translations
+btm list --all                 # include copyrighted stubs
+btm search japanese            # local catalog + eBible.org
+btm get "John 3:16" -t KJV     # look up a passage (downloads on first use)
+btm find love -t WEB --limit 5 # search verse text
+btm download KJV -o ./output   # fetch + convert one translation
+btm batch --ids KJV,WEB,LSG    # fetch several at once
 ```
 
-### Search eBible.org catalog
+## Translations
 
-```bash
-python main.py search "king james"
-python main.py search "spanish"
+98 entries across 39 languages, including:
+
+| Language | Translations |
+|---|---|
+| English | KJV, WEB, ASV, BBE, DARBY, DRA, YLT, OEB-US/CW, WEBBE, BSB, FBV, LSV, GNV, NET, RV, WMB, ULB, T4T, Webster, JPS, Brenton, NIV*, TPT*, + stubs (ESV, NLT, NKJV, CSB, NASB, NRSV) |
+| Spanish | Reina Valera 1909/1602/Gómez, BES, PDDPT, VBL, BLL |
+| German | Luther 1912, Elberfelder |
+| French | Ostervald, Louis Segond 1910, FOB, Darby |
+| Portuguese | Almeida, Bíblia Livre, BPM |
+| Russian | Synodal |
+| Chinese | CUV Traditional/Simplified, CUV-89 Simplified/Traditional |
+| Japanese | Colloquial (口語訳), Shinkaiyaku 1965 NT, Freedom Bible |
+| Korean | Korean Revised Version |
+| Italian | Riveduta 1927, Diodati 1885 |
+| Dutch | Statenvertaling, 1917 |
+| Arabic | Van Dyke |
+| Hindi | IRV Hindi |
+| Greek | Byzantine Majority NT, SBLGNT, Septuagint |
+| Hebrew | Westminster Leningrad Codex, Modern Hebrew |
+| Latin | Clementine Vulgate |
+| Others | Finnish, Swedish, Norwegian, Danish, Polish (Gdańska, UBG), Czech (Kralická), Hungarian (Károli), Croatian, Latvian, Albanian, Romanian, Ukrainian (Kulish), Bulgarian, Swahili, Tagalog, Vietnamese, Thai (x2), Turkish (x2), Indonesian, Māori, Cherokee, Patep |
+
+Sources: [open-bibles](https://github.com/seven1m/open-bibles) (OSIS/Zefania/USFX),
+[eBible.org](https://ebible.org) (USFX, all entries marked redistributable there),
+[bible.com](https://bible.com) (`*` personal-use scraping).
+
+Need one of the 1,500+ eBible.org translations not listed here? Every catalog
+entry follows the same `https://eBible.org/Scriptures/{id}_usfx.zip` pattern:
+
+```python
+from btm.library import Library
+from btm.bible import Bible
+import requests, zipfile, io
+from btm import converter
+
+tid = "swhonen"  # any eBible.org translationId
+raw = requests.get(f"https://eBible.org/Scriptures/{tid}_usfx.zip", timeout=120).content
+name = [n for n in zipfile.ZipFile(io.BytesIO(raw)).namelist() if n.endswith("_usfx.xml")][0]
+xml = zipfile.ZipFile(io.BytesIO(raw)).read(name).decode("utf-8")
+bible = Bible.from_opensong_xml(converter.convert_to_opensong(xml, "usfx"), translation=tid)
+print(bible.get_verse("John", 3, 16).text)
 ```
-
-### Download a translation
-
-```bash
-python main.py download KJV
-python main.py download eng-web -o ./my_bibles
-```
-
-### Batch download
-
-```bash
-python main.py batch --ids KJV,WEB,ASV
-```
-
-Translation IDs: KJV, WEB, ASV, BBE, DARBY, DRA, YLT, OEB-US, OEB-CW, WEBBE, RV1909, BES, LUT1912, ALM, OST, RUS, CUV, BSB, FBV, LSV, GNV, TPT, PTP, NIV, ESV (stub), NLT (stub), NKJV (stub), CSB (stub), NASB (stub), NRSV (stub).
-
-## Output
-
-Files are saved in OpenSong XML format:
-
-```xml
-<bible>
-  <b n="1" name="Genesis">
-    <c n="1">
-      <v n="1">In the beginning God created the heaven and the earth.</v>
-    </c>
-  </b>
-</bible>
-```
-
-## Supported Sources
-
-| Source | Formats | Translations |
-|---|---|---|
-| [Open Bibles](https://github.com/seven1m/open-bibles) (GitHub) | OSIS, Zefania | KJV, WEB, ASV, BBE, DARBY, DRA, YLT, OEB-US, OEB-CW, WEBBE, RV1909, BES, LUT1912, ALM, OST, RUS, CUV, BSB, FBV, LSV, GNV, PTP |
-| [eBible.org](https://ebible.org) | USFX | 50,000+ translations via catalog search |
-| [YouVersion](https://bible.com) | Web scrape | NIV, The Passion Translation (TPT) |
 
 ## License
 
-This tool is for personal use. Respect the copyright terms of each translation — NIV and TPT are downloaded from bible.com for personal use only; other copyrighted works (ESV, NLT, etc.) produce stub files only.
+Code is MIT (see `LICENSE`). Bible *texts* belong to their respective
+copyright holders — see each translation's `copyright` field and respect its
+terms. NIV/TPT downloads via bible.com are for personal use only;
+ESV/NLT/NKJV/CSB/NASB/NRSV ship as stub files only.
