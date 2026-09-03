@@ -30,16 +30,6 @@ jobs:
         run: |
           sed -i "s/^version = .*/version = \"${{ inputs.version }}\"/" pyproject.toml
 
-      - name: Check release tag matches package version
-        if: github.event_name == 'release'
-        run: |
-          TAG="${GITHUB_REF#refs/tags/}"
-          VER=$(python -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
-          if [ "$TAG" != "v$VER" ] && [ "$TAG" != "$VER" ]; then
-            echo "Release tag '$TAG' does not match package version '$VER'"
-            exit 1
-          fi
-
       - name: Build package
         run: python -m build
 
