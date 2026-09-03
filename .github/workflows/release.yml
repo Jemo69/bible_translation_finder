@@ -1,0 +1,36 @@
+name: Release
+
+# Publishes to PyPI when you publish a GitHub Release.
+# Tag the release to match the version in pyproject.toml, e.g. tag `v0.2.0`
+# for version `0.2.0`.
+#
+# One-time setup (no tokens needed — uses PyPI trusted publishing):
+#   PyPI → Account settings → Publishing → Add a new pending publisher:
+#   owner/repo = your GitHub owner and repo name,
+#   workflow name = release.yml
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write # required for PyPI trusted publishing
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+      - name: Check release tag matches package version
+        run: |
+          TAG="${GITHUB_REF#refs/tags/}"
+          VER=$(uv run --no-sync python -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
+          if [ "$TAG" != "v$VER" ] && [ "$TAG" != "$VER" ]; then
+            echo "Release tag '$TAG' does not match package version '$VER'"
+            exit 1
+          fi
+      - run: uv build
+      - uses: pypa/gh-action-pypi-publish@release/v1
