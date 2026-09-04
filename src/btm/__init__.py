@@ -1,31 +1,26 @@
-"""bible_translation_finder: find and read Bible verses in Python.
+"""bible_translation_finder: download Bible translations as OpenSong XML.
 
-Library usage (for API servers, GUIs, TUIs)::
+This package helps people fetch full Bible translations and save them as
+OpenSong-format XML files that can be loaded by presentation software
+like OpenSong, FreeShow, and similar lyrics-display tools.
 
-    import btm
+Quick start::
 
-    # One-shot lookups (downloads KJV on first use, then caches it)
-    print(btm.get_verse("John 3:16").text)
-    print(btm.get_passage("Ps 23:1-3", translation="WEB").text)
-    for hit in btm.find("everlasting", translation="KJV", limit=5):
-        print(hit.reference, "-", hit.text)
+    import btf
 
-    # Browse the catalog (90 translations, 30+ languages — offline)
-    for t in btm.find_translations("japanese"):
-        print(t["abbreviation"], t["name"])
+    # List available translations
+    btf.list_translations()
 
-    # Hold a translation open for repeated queries
-    bible = btm.load("KOUGO")          # Japanese Colloquial Version
-    print(bible.get_verse("John", 3, 16).text)
+    # Download one translation to a directory
+    btf.download("KJV", output_dir="./bibles")
 
-The ``btm`` command-line tool keeps the original download workflow::
+    # Or many at once
+    btf.batch(["KJV", "WEB", "LSG", "KOUGO"], output_dir="./bibles")
 
-    btm list
-    btm get "John 3:16" --translation KJV
-    btm download KJV
+    # Or just get the XML string in memory (no disk write)
+    xml = btf.fetch_xml("KJV")
 """
 
-from .bible import Bible, Passage, Verse
 from .catalog import (
     get_by_abbreviation,
     get_catalog,
@@ -35,88 +30,36 @@ from .catalog import (
     list_languages,
     search_catalog,
 )
-from .converter import BIBLE_BOOKS
-from .library import Library, default_data_dir, get_library
-from .reference import Reference, normalize_book_name, parse_reference
+from .cli import run_cli
+from .converter import BIBLE_BOOKS, convert_to_opensong
+from .library import Library, batch, default_data_dir, download, fetch_xml
 
 __all__ = [
-    "Bible",
-    "Passage",
-    "Verse",
-    "Reference",
+    "BIBLE_BOOKS",
     "Library",
-    "get_library",
     "default_data_dir",
-    "get_verse",
-    "get_passage",
-    "get_chapter",
-    "find",
-    "search",
-    "load",
+    "download",
+    "batch",
+    "fetch_xml",
     "list_translations",
     "find_translations",
+    "list_languages",
     "get_catalog",
     "get_translation",
     "get_by_abbreviation",
     "get_freely_available",
     "get_copyrighted",
-    "list_languages",
     "search_catalog",
-    "normalize_book_name",
-    "parse_reference",
-    "BIBLE_BOOKS",
+    "convert_to_opensong",
+    "run_cli",
 ]
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 
 
-def load(translation: str = "KJV", data_dir=None) -> Bible:
-    """Load a translation for repeated queries (downloads on first use)."""
-    return get_library(data_dir).load(translation)
-
-
-def get_verse(reference: str, translation: str = "KJV", data_dir=None) -> Verse:
-    """Look up verses by reference, e.g. ``get_verse("John 3:16-17")``.
-
-    A reference with a verse range returns the *first* verse of the range;
-    use :func:`get_passage` for the whole range.
-    """
-    bible = get_library(data_dir).load(translation)
-    ref = parse_reference(reference)
-    if ref.chapter is None:
-        raise ValueError(
-            f"{reference!r} names a whole book; use get_passage() instead."
-        )
-    if ref.verse_start is None:
-        raise ValueError(
-            f"{reference!r} names a whole chapter; use get_chapter() or get_passage()."
-        )
-    assert ref.chapter is not None and ref.verse_start is not None
-    return bible.get_verse(ref.book, ref.chapter, ref.verse_start)
-
-
-def get_passage(reference: str, translation: str = "KJV", data_dir=None) -> Passage:
-    """Return every verse for ``reference`` ('John 3:16-18', 'Ps 23', ...)."""
-    return get_library(data_dir).load(translation).get_passage(reference)
-
-
-def get_chapter(book: str, chapter: int, translation: str = "KJV", data_dir=None) -> Passage:
-    """Return every verse in ``book``/``chapter``."""
-    return get_library(data_dir).load(translation).get_chapter(book, chapter)
-
-
-def find(query: str, translation: str = "KJV", limit: int = 50, data_dir=None):
-    """Full-text search for ``query`` within one translation."""
-    return get_library(data_dir).load(translation).search(query, limit=limit)
-
-
-# Alias — ``btm.search(...)`` reads naturally too.
-search = find
-
-
-def list_translations(include_copyrighted: bool = True, data_dir=None):
+def list_translations(include_copyrighted: bool = True):
     """List catalog entries, most popular first."""
-    return get_library(data_dir).list_translations(include_copyrighted)
+    return get_catalog() if include_copyrighted else get_freely_available()
 
 
 def find_translations(query: str = "", language: str = ""):

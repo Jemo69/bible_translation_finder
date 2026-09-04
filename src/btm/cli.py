@@ -1,22 +1,22 @@
+"""Command-line interface for bible_translation_finder."""
+
+import argparse
 import os
 import sys
-from pathlib import Path
 from typing import Optional
 
-from . import catalog
-from . import converter
-from . import scraper
+from . import catalog, converter, scraper
+from .library import Library, batch as batch_download, default_data_dir, download as download_one
 
 
-def format_table(rows: list[list[str]], headers: list[str]) -> str:
+def format_table(rows, headers):
     col_widths = [len(h) for h in headers]
     for row in rows:
         for i, cell in enumerate(row):
             col_widths[i] = max(col_widths[i], len(cell))
 
     lines = []
-    header = " | ".join(h.ljust(col_widths[i]) for i, h in enumerate(headers))
-    lines.append(header)
+    lines.append(" | ".join(h.ljust(col_widths[i]) for i, h in enumerate(headers)))
     lines.append("-+-".join("-" * w for w in col_widths))
     for row in rows:
         lines.append(" | ".join(cell.ljust(col_widths[i]) for i, cell in enumerate(row)))
@@ -24,11 +24,10 @@ def format_table(rows: list[list[str]], headers: list[str]) -> str:
 
 
 def cmd_list(args):
-    translations = catalog.get_catalog()
-    if not getattr(args, "all", False):
-        translations = [t for t in translations if t["freely_available"]]
+    lib = Library(getattr(args, "data_dir", None) or default_data_dir())
+    translations = lib.list_translations(include_copyrighted=getattr(args, "all", False))
     rows = []
-    for t in sorted(translations, key=lambda x: x.get("popularity_rank", 99)):
+    for t in translations:
         avail = "Yes" if t["freely_available"] else "No (copyrighted)"
         rows.append([
             t["abbreviation"],
@@ -44,7 +43,6 @@ def cmd_list(args):
 
 def cmd_search(args):
     query = args.query
-    # Offline catalog search first (fast, no network).
     local = catalog.search_catalog(query)
     if local:
         rows = [[t["abbreviation"], t["name"], t["language"]] for t in local[:30]]
@@ -52,7 +50,6 @@ def cmd_search(args):
         print()
         print(format_table(rows, ["Abbrev", "Name", "Language"]))
         print()
-    # Then the full eBible.org online catalog.
     try:
         results = scraper.search_ebible_catalog(query=query)
     except Exception as e:
@@ -70,139 +67,53 @@ def cmd_search(args):
     print(format_table(rows, ["ID", "Title", "Language", "Copyright"]))
 
 
-def cmd_get(args):
-    """Print one passage: btm get "John 3:16" --translation KJV."""
-    from .library import Library
-
-    lib = Library(getattr(args, "data_dir", None) or None)
+def cmd_download(args):
+    output_dir = args.output
     try:
-        bible = lib.load(args.translation)
+        path = download_one(
+            args.translation_id,
+            output_dir=output_dir,
+            data_dir=getattr(args, "data_dir", None),
+            overwrite=getattr(args, "force", False),
+        )
     except KeyError as e:
         print(e)
-        return
-    except FileNotFoundError as e:
-        print(e)
-        return
-    try:
-        passage = bible.get_passage(args.reference)
-    except (ValueError, KeyError) as e:
-        print(f"Error: {e}")
-        return
-    print(f"{passage.reference} ({bible.translation})")
-    for v in passage.verses:
-        print(f"{v.verse} {v.text}")
-
-
-def cmd_find(args):
-    """Search verse texts: btm find love --translation WEB --limit 10."""
-    from .library import Library
-
-    lib = Library(getattr(args, "data_dir", None) or None)
-    try:
-        bible = lib.load(args.translation)
-    except (KeyError, FileNotFoundError) as e:
-        print(e)
-        return
-    try:
-        hits = bible.search(args.query, limit=args.limit)
-    except ValueError as e:
-        print(f"Error: {e}")
-        return
-    if not hits:
-        print("No matches found.")
-        return
-    print(f"Found {len(hits)} match(es) in {bible.translation}:")
-    for v in hits:
-        print(f"  {v.reference} — {v.text[:160]}")
-
-
-def cmd_download(args):
-    trans_id = args.translation_id
-    output_dir = args.output or "output"
-
-    t = catalog.get_translation(trans_id)
-    if t is None:
-        all_trans = catalog.get_catalog()
-        for ct in all_trans:
-            if ct["abbreviation"].lower() == trans_id.lower() or ct.get("id", "").lower() == trans_id.lower():
-                t = ct
-                break
-
-    if t is None:
-        print(f"Translation '{trans_id}' not found in catalog.")
         print("Use 'list' to see available translations or 'search' to find more.")
-        return
-
-    if not t["freely_available"]:
-        print(f"Warning: {t['name']} ({t['abbreviation']}) is copyrighted.")
-        print(f"Copyright: {t['copyright']}")
-        print("Cannot automatically download copyrighted translations.")
-        resp = input("Do you still want to create a stub file? (y/N): ")
-        if resp.lower() != "y":
-            return
-        xml_content = None
-    else:
-        print(f"Downloading {t['name']} ({t['abbreviation']})...")
-        xml_content = _download_translation(t)
-
-    _output_opensong(t, xml_content, output_dir)
+        sys.exit(1)
 
 
 def cmd_batch(args):
-    output_dir = args.output or "output"
-    include_copyrighted = args.include_copyrighted or False
-
-    translations = catalog.get_catalog()
-    if include_copyrighted:
-        targets = translations
-    else:
-        targets = [t for t in translations if t["freely_available"]]
-
+    output_dir = args.output
     if args.ids:
-        id_list = [x.strip().lower() for x in args.ids.split(",")]
-        targets = [t for t in translations if t["abbreviation"].lower() in id_list or t["id"].lower() in id_list]
+        translations = [x.strip() for x in args.ids.split(",") if x.strip()]
+    else:
+        # Default: all freely available translations
+        translations = [t["abbreviation"] for t in catalog.get_freely_available()]
+    batch_download(
+        translations,
+        output_dir=output_dir,
+        data_dir=getattr(args, "data_dir", None),
+        overwrite=getattr(args, "force", False),
+    )
 
-    for t in targets:
-        print(f"\nProcessing {t['abbreviation']} - {t['name']}...")
-        if not t["freely_available"]:
-            print(f"  Skipping (copyrighted): {t['copyright']}")
-            _output_opensong(t, None, output_dir)
-            continue
 
-        try:
-            xml_content = _download_translation(t)
-            _output_opensong(t, xml_content, output_dir)
-        except Exception as e:
-            print(f"  Error: {e}")
+def cmd_downloaded(args):
+    lib = Library(args.data_dir or default_data_dir())
+    have = lib.downloaded()
+    if not have:
+        print("No translations have been downloaded yet.")
+        return
+    rows = [[t["abbreviation"], t["name"], t["language"], str(lib.file_for(t["abbreviation"]))] for t in have]
+    print(f"Downloaded {len(have)} translation(s):")
+    print()
+    print(format_table(rows, ["Abbrev", "Name", "Language", "Path"]))
 
 
 def _download_translation(t: dict) -> Optional[str]:
-    source_type = t.get("source_type")
-    source_url = t.get("source_url")
-    source_format = t.get("source_format")
-
-    if source_type == "youversion":
-        version_id = t.get("youversion_id")
-        books = scraper.YOUVERSION_BOOKS.get(t.get("youversion_books"))
-        if not version_id or not books:
-            raise ValueError(f"No YouVersion config for {t['abbreviation']}")
-        print(f"  Downloading from YouVersion (bible.com)...")
-        print(f"  {sum(books.values())} chapters, this takes several minutes...")
-        opensong_xml = scraper.download_youversion(version_id, books, t["name"])
-        return opensong_xml
-    elif source_type == "open-bibles" and source_url:
-        filename = source_url.rstrip("/").split("/")[-1]
-        xml_content = scraper.download_open_bibles(filename)
-    elif source_type == "ebible" and source_url:
-        xml_content = scraper.download_ebible_usfx(source_url)
-    else:
-        raise ValueError(f"No download method for {t['abbreviation']}")
-
-    if xml_content:
-        print(f"  Converting to OpenSong format...")
-        result = converter.convert_to_opensong(xml_content, source_format)
-        return result
-    return None
+    """Legacy helper used by the converter pipeline tests."""
+    from . import cli as _cli
+    from .library import _fetch_opensong_xml
+    return _fetch_opensong_xml(t)
 
 
 def _output_opensong(t: dict, opensong_xml: Optional[str], output_dir: str):
@@ -211,53 +122,30 @@ def _output_opensong(t: dict, opensong_xml: Optional[str], output_dir: str):
     filepath = os.path.join(output_dir, filename)
 
     if opensong_xml:
-        xml_declaration = '<?xml version="1.0" encoding="UTF-8"?>\n'
-        full_content = xml_declaration + opensong_xml
+        content = '<?xml version="1.0" encoding="UTF-8"?>\n' + opensong_xml
         with open(filepath, "w", encoding="utf-8") as f:
-            f.write(full_content)
+            f.write(content)
         print(f"  Wrote: {filepath}")
     else:
-        stub = _make_stub(t)
         with open(filepath, "w", encoding="utf-8") as f:
-            f.write(stub)
+            f.write(_make_stub(t))
         print(f"  Wrote stub: {filepath}  (contains placeholder only)")
 
 
 def _make_stub(t: dict) -> str:
-    lines = [
-        '<?xml version="1.0" encoding="UTF-8"?>',
-        "<!--",
-        f"  Translation: {t['name']} ({t['abbreviation']})",
-        f"  Language: {t['language']}",
-        f"  Copyright: {t['copyright']}",
-        "",
-        "  This is a STUB file. The full Bible text for this translation",
-        "  is copyrighted and not freely redistributable.",
-        "",
-        "  To obtain this Bible translation, please contact the copyright holder",
-        f"  or purchase a licensed copy from an authorized retailer.",
-        "",
-        "  For OpenSong format, you may be able to download from:",
-        "  - https://opensong.org/downloads/",
-        "  - https://freely-given.org/Software/BibleDropBox/Formats/OpenSongBibles.html",
-        "-->",
-        "<bible>",
-    ]
-    for book in converter.BIBLE_BOOKS:
-        lines.append(f'  <b n="{book}">')
-        lines.append(f'    <c n="1">')
-        lines.append(f'      <v n="1">[Placeholder - {t["abbreviation"]} Bible text not included]</v>')
-        lines.append(f'    </c>')
-        lines.append(f'  </b>')
-    lines.append("</bible>")
-    return "\n".join(lines)
+    from .library import _make_stub as _impl
+    return _impl(t)
 
 
 def run_cli():
-    import argparse
-
     parser = argparse.ArgumentParser(
-        description="Bible Translation Maker - find Bible verses and convert translations to OpenSong XML"
+        prog="btm",
+        description="bible_translation_finder - download Bible translations as OpenSong XML for use in FreeShow, OpenSong, and other lyrics-display software",
+    )
+    parser.add_argument(
+        "--data-dir",
+        default=None,
+        help="Where downloaded XML files are stored (default: ~/.local/share/bible-translation-finder)",
     )
     sub = parser.add_subparsers(dest="command")
 
@@ -267,39 +155,31 @@ def run_cli():
     p_search = sub.add_parser("search", help="Search for translations (local catalog + eBible.org)")
     p_search.add_argument("query", help="Search query (translation name, language, or ID)")
 
-    p_get = sub.add_parser("get", help='Look up a passage, e.g. btm get "John 3:16"')
-    p_get.add_argument("reference", help='Bible reference, e.g. "John 3:16", "Ps 23:1-3"')
-    p_get.add_argument("-t", "--translation", default="KJV", help="Translation abbreviation or id (default: KJV)")
-    p_get.add_argument("--data-dir", default=None, help="Library data directory (default: ~/.local/share/bible-translation-finder)")
+    p_download = sub.add_parser("download", help="Download a specific translation to a directory")
+    p_download.add_argument("translation_id", help="Translation ID or abbreviation (e.g. 'KJV', 'eng-web')")
+    p_download.add_argument("-o", "--output", default=".", help="Output directory (default: current directory)")
+    p_download.add_argument("--force", action="store_true", help="Re-download even if the file already exists")
 
-    p_find = sub.add_parser("find", help="Search verse text, e.g. btm find love --translation WEB")
-    p_find.add_argument("query", help="Text to search for")
-    p_find.add_argument("-t", "--translation", default="KJV", help="Translation abbreviation or id (default: KJV)")
-    p_find.add_argument("--limit", type=int, default=20, help="Maximum matches (default: 20)")
-    p_find.add_argument("--data-dir", default=None, help="Library data directory")
+    p_batch = sub.add_parser(
+        "batch",
+        help="Download many translations at once (default: every freely available translation)",
+    )
+    p_batch.add_argument("--ids", help="Comma-separated list of abbreviations or IDs (e.g. 'KJV,WEB,LSG')")
+    p_batch.add_argument("-o", "--output", default=".", help="Output directory (default: current directory)")
+    p_batch.add_argument("--force", action="store_true", help="Re-download even if files already exist")
 
-    p_download = sub.add_parser("download", help="Download a specific translation")
-    p_download.add_argument("translation_id", help="Translation ID or abbreviation (e.g., 'KJV', 'eng-web')")
-    p_download.add_argument("-o", "--output", default="output", help="Output directory")
-
-    p_batch = sub.add_parser("batch", help="Download multiple translations")
-    p_batch.add_argument("--ids", help="Comma-separated list of IDs/abbreviations (e.g., 'KJV,WEB,ASV')")
-    p_batch.add_argument("-o", "--output", default="output", help="Output directory")
-    p_batch.add_argument("--include-copyrighted", action="store_true", help="Include copyrighted translations (stubs)")
+    p_downloaded = sub.add_parser("downloaded", help="List translations already downloaded to the data directory")
 
     args = parser.parse_args()
-
     if args.command == "list":
         cmd_list(args)
     elif args.command == "search":
         cmd_search(args)
-    elif args.command == "get":
-        cmd_get(args)
-    elif args.command == "find":
-        cmd_find(args)
     elif args.command == "download":
         cmd_download(args)
     elif args.command == "batch":
         cmd_batch(args)
+    elif args.command == "downloaded":
+        cmd_downloaded(args)
     else:
         parser.print_help()

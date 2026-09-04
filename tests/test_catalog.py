@@ -1,4 +1,6 @@
-from btm import catalog
+import xml.etree.ElementTree as ET
+
+from btm import catalog, converter, library
 
 
 def test_catalog_size():
@@ -65,3 +67,26 @@ def test_search_catalog_offline():
     assert any(t["abbreviation"] == "LUT1912" for t in hits)
     hits = catalog.search_catalog("", language="Korean")
     assert len(hits) >= 1
+
+
+def test_library_lists_downloaded(tmp_path):
+    lib = library.Library(tmp_path)
+    lib.download("KJV", overwrite=True)
+    assert lib.is_downloaded("KJV")
+    assert any(t["abbreviation"] == "KJV" for t in lib.downloaded())
+
+
+def test_library_download_stub_for_copyrighted(tmp_path):
+    lib = library.Library(tmp_path)
+    path = lib.download("ESV")  # ESV has no free source → stub
+    assert path.exists()
+    text = path.read_text(encoding="utf-8")
+    assert "[Placeholder" in text
+    assert "ESV" in text
+
+
+def test_download_to_specific_output_dir(tmp_path):
+    out = tmp_path / "out"
+    path = library.download("KJV", output_dir=out, overwrite=True)
+    assert path.exists()
+    assert path.parent == out

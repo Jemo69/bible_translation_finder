@@ -1,27 +1,55 @@
-"""Local library: download, cache, and load Bible translations.
+"""Local library: download, cache, and convert Bible translations to XML.
 
-A :class:`Library` keeps downloaded OpenSong XML files in a data directory
-(``~/.local/share/bible-translation-finder`` by default, overridable with the
-``BTM_DATA_DIR`` environment variable or an explicit path) and loads them as
-:class:`btm.bible.Bible` objects with an in-memory cache, so API servers,
-GUIs, and TUIs can share one simple interface::
-
-    from btm.library import Library
-    lib = Library()
-    bible = lib.load("KJV")          # downloads on first use, then caches
-    print(bible.get_passage("John 3:16").text)
+Translations are saved as OpenSong XML in a per-library data directory
+(``~/.local/share/bible-translation-finder`` by default; override with the
+``BTM_DATA_DIR`` environment variable) so the files can be dropped straight
+into OpenSong, FreeShow, or any other presentation software that consumes
+that format.
 """
 
 from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Union
 
 from . import catalog as _catalog
 from . import converter as _converter
 from . import scraper as _scraper
-from .bible import Bible
+
+
+def _make_stub(t: dict) -> str:
+    """Build an OpenSong XML placeholder file for a copyrighted translation.
+
+    Defined here too so :mod:`btm.cli` can import it without a circular dep.
+    """
+    lines = [
+        '<?xml version="1.0" encoding="UTF-8"?>',
+        "<!--",
+        f"  Translation: {t['name']} ({t['abbreviation']})",
+        f"  Language: {t['language']}",
+        f"  Copyright: {t['copyright']}",
+        "",
+        "  This is a STUB file. The full Bible text for this translation",
+        "  is copyrighted and not freely redistributable.",
+        "",
+        "  To obtain this Bible translation, please contact the copyright holder",
+        f"  or purchase a licensed copy from an authorized retailer.",
+        "",
+        "  For OpenSong format, you may be able to download from:",
+        "  - https://opensong.org/downloads/",
+        "  - https://freely-given.org/Software/BibleDropBox/Formats/OpenSongBibles.html",
+        "-->",
+        "<bible>",
+    ]
+    for book in _converter.BIBLE_BOOKS:
+        lines.append(f'  <b n="{book}">')
+        lines.append(f'    <c n="1">')
+        lines.append(f'      <v n="1">[Placeholder - {t["abbreviation"]} Bible text not included]</v>')
+        lines.append(f'    </c>')
+        lines.append(f'  </b>')
+    lines.append("</bible>")
+    return "\n".join(lines)
 
 
 def default_data_dir() -> Path:
@@ -35,12 +63,134 @@ def translation_filename(t: dict) -> str:
     return f"{t['abbreviation'].lower()}_{t['id'].replace('-', '_')}.xml"
 
 
-class Library:
-    """Manages a local collection of Bible translations."""
+def _fetch_opensong_xml(t: dict) -> Optional[str]:
+    source_type = t.get("source_type")
+    source_url = t.get("source_url")
+    source_format = t.get("source_format")
+    if source_type == "youversion":
+        version_id = t.get("youversion_id")
+        books = _scraper.YOUVERSION_BOOKS.get(t.get("youversion_books"))
+        if not version_id or not books:
+            raise ValueError(f"No YouVersion config for {t['abbreviation']}")
+        return _scraper.download_youversion(version_id, books, t["name"])
+    if source_type == "open-bibles" and source_url:
+        filename = source_url.rstrip("/").split("/")[-1]
+        raw = _scraper.download_open_bibles(filename)
+    elif source_type == "ebible" and source_url:
+        raw = _scraper.download_ebible_usfx(source_url)
+    else:
+        raise ValueError(f"No download method for {t['abbreviation']}")
+    if not raw:
+        return None
+    return _converter.convert_to_opensong(raw, source_format)
 
-    def __init__(self, data_dir: Optional[Path | str] = None):
+
+def fetch_xml(translation: str) -> str:
+    """Return the OpenSong XML for ``translation`` as a string (no disk write).
+
+    Useful when you want to stream the XML into another pipeline (e.g. load
+    it directly into FreeShow's stage-display plugin) without touching the
+    filesystem.
+    """
+    t = _catalog.get_by_abbreviation(translation)
+    if t is None:
+        raise KeyError(
+            f"Unknown translation: {translation!r}. "
+            "Use list_translations() or find_translations() to browse what is available."
+        )
+    if not t["freely_available"]:
+        return _make_stub(t)
+    xml = _fetch_opensong_xml(t)
+    if not xml:
+        return _make_stub(t)
+    return '<?xml version="1.0" encoding="UTF-8"?>\n' + xml
+
+
+def download(
+    translation: str,
+    output_dir: Optional[Union[Path, str]] = None,
+    data_dir: Optional[Union[Path, str]] = None,
+    overwrite: bool = False,
+    progress: bool = True,
+) -> Path:
+    """Download ``translation`` to an OpenSong XML file and return its path.
+
+    When ``output_dir`` is given, the file is written there. Otherwise the
+    library's ``data_dir`` is used (so the translation is available to
+    :class:`Library` afterwards).
+    """
+    t = _catalog.get_by_abbreviation(translation)
+    if t is None:
+        raise KeyError(
+            f"Unknown translation: {translation!r}. "
+            "Use list_translations() or find_translations() to browse what is available."
+        )
+    if data_dir is None:
+        data_dir = default_data_dir() if output_dir is None else None
+    if data_dir is not None:
+        data_dir = Path(data_dir).expanduser()
+        data_dir.mkdir(parents=True, exist_ok=True)
+        dest = data_dir / translation_filename(t)
+    else:
+        dest = Path(output_dir).expanduser() / translation_filename(t)
+        dest.parent.mkdir(parents=True, exist_ok=True)
+
+    if dest.exists() and not overwrite:
+        return dest
+
+    opensong_xml: Optional[str] = None
+    if t["freely_available"]:
+        if progress:
+            print(f"Downloading {t['name']} ({t['abbreviation']})...")
+        opensong_xml = _fetch_opensong_xml(t)
+    else:
+        if progress:
+            print(
+                f"Note: {t['abbreviation']} is copyrighted; writing a stub file."
+            )
+
+    if opensong_xml:
+        content = '<?xml version="1.0" encoding="UTF-8"?>\n' + opensong_xml
+    else:
+        content = _make_stub(t)
+    dest.write_text(content, encoding="utf-8")
+    if progress:
+        print(f"Wrote: {dest}")
+    return dest
+
+
+def batch(
+    translations: list[str],
+    output_dir: Optional[Union[Path, str]] = None,
+    data_dir: Optional[Union[Path, str]] = None,
+    overwrite: bool = False,
+    progress: bool = True,
+) -> list[Path]:
+    """Download several translations; returns the list of written file paths."""
+    paths: list[Path] = []
+    for tid in translations:
+        try:
+            paths.append(
+                download(
+                    tid,
+                    output_dir=output_dir,
+                    data_dir=data_dir,
+                    overwrite=overwrite,
+                    progress=progress,
+                )
+            )
+        except Exception as e:
+            if progress:
+                print(f"  Error processing {tid}: {e}")
+    return paths
+
+
+class Library:
+    """Manages a local collection of downloaded Bible translation XML files."""
+
+    def __init__(self, data_dir: Optional[Union[Path, str]] = None):
         self.data_dir = Path(data_dir).expanduser() if data_dir else default_data_dir()
-        self._cache: dict[str, Bible] = {}
+        self.data_dir.mkdir(parents=True, exist_ok=True)
 
     # -- catalog ------------------------------------------------------
     def list_translations(self, include_copyrighted: bool = True) -> list[dict]:
@@ -50,14 +200,12 @@ class Library:
         return sorted(translations, key=lambda t: t.get("popularity_rank", 99))
 
     def find_translations(self, query: str = "", language: str = "") -> list[dict]:
-        """Offline search of the curated catalog."""
         return _catalog.search_catalog(query=query, language=language)
 
     def languages(self) -> list[str]:
         return _catalog.list_languages()
 
     def resolve(self, translation: str) -> dict:
-        """Resolve an abbreviation or id to a catalog entry."""
         t = _catalog.get_by_abbreviation(translation)
         if t is None:
             raise KeyError(
@@ -78,109 +226,26 @@ class Library:
             return False
 
     def downloaded(self) -> list[dict]:
-        """Catalog entries that have a cached XML file in this library."""
         have = []
         for t in _catalog.get_catalog():
             if (self.data_dir / translation_filename(t)).exists():
                 have.append(t)
         return sorted(have, key=lambda t: t.get("popularity_rank", 99))
 
-    # -- download -----------------------------------------------------
+    def path(self, translation: str) -> Path:
+        return self.file_for(translation)
+
     def download(
-        self, translation: str, overwrite: bool = False, progress: bool = True
+        self,
+        translation: str,
+        overwrite: bool = False,
+        progress: bool = True,
     ) -> Path:
-        """Download (if needed) and return the cached OpenSong XML path.
-
-        Copyrighted translations without a free source produce a stub file.
-        """
-        t = self.resolve(translation)
-        dest = self.data_dir / translation_filename(t)
-        if dest.exists() and not overwrite:
-            return dest
-        self.data_dir.mkdir(parents=True, exist_ok=True)
-
-        opensong_xml: Optional[str] = None
-        if t["freely_available"]:
-            if progress:
-                print(f"Downloading {t['name']} ({t['abbreviation']})...")
-            opensong_xml = self._fetch(t)
-        else:
-            if progress:
-                print(f"Note: {t['abbreviation']} is copyrighted; writing stub file.")
-
-        from .cli import _make_stub  # reuse the stub builder
-
-        if opensong_xml:
-            content = '<?xml version="1.0" encoding="UTF-8"?>\n' + opensong_xml
-        else:
-            content = _make_stub(t)
-        dest.write_text(content, encoding="utf-8")
-        if progress:
-            print(f"Wrote: {dest}")
-        # Drop any stale in-memory copy so the next load re-reads the file.
-        self._cache.pop(t["id"], None)
-        return dest
-
-    def _fetch(self, t: dict) -> Optional[str]:
-        source_type = t.get("source_type")
-        source_url = t.get("source_url")
-        source_format = t.get("source_format")
-        if source_type == "youversion":
-            version_id = t.get("youversion_id")
-            books = _scraper.YOUVERSION_BOOKS.get(t.get("youversion_books"))
-            if not version_id or not books:
-                raise ValueError(f"No YouVersion config for {t['abbreviation']}")
-            print("  Downloading from YouVersion (bible.com); this takes a while...")
-            return _scraper.download_youversion(version_id, books, t["name"])
-        if source_type == "open-bibles" and source_url:
-            filename = source_url.rstrip("/").split("/")[-1]
-            raw = _scraper.download_open_bibles(filename)
-        elif source_type == "ebible" and source_url:
-            raw = _scraper.download_ebible_usfx(source_url)
-        else:
-            raise ValueError(f"No download method for {t['abbreviation']}")
-        if not raw:
-            return None
-        print("  Converting to OpenSong format...")
-        return _converter.convert_to_opensong(raw, source_format)
-
-    # -- loading ------------------------------------------------------
-    def load(self, translation: str = "KJV", download: bool = True) -> Bible:
-        """Load a translation as a :class:`Bible` (cached in memory).
-
-        Downloads it first unless ``download=False``.
-        """
-        t = self.resolve(translation)
-        if t["id"] in self._cache:
-            return self._cache[t["id"]]
-        path = self.data_dir / translation_filename(t)
-        if not path.exists():
-            if not download:
-                raise FileNotFoundError(
-                    f"{t['abbreviation']} is not cached at {path}. "
-                    f"Call Library().download({t['abbreviation']!r}) first."
-                )
-            path = self.download(t["abbreviation"])
-        bible = Bible.from_file(path, translation=t["abbreviation"], name=t["name"])
-        self._cache[t["id"]] = bible
-        return bible
-
-    def load_file(self, path: Path | str, translation: str = "") -> Bible:
-        """Load any OpenSong XML file directly (no catalog needed)."""
-        return Bible.from_file(path, translation=translation)
-
-    def clear_cache(self) -> None:
-        self._cache.clear()
-
-
-# Shared default library for the top-level convenience functions.
-_default_library: Optional[Library] = None
-
-
-def get_library(data_dir: Optional[Path | str] = None) -> Library:
-    global _default_library
-    if data_dir is not None:
-        return Library(data_dir)
-    if _default_library is None:
-        _default_library = Library()
-    return _default_library
+        """Download ``translation`` to this library's data_dir and return its path."""
+        return download(
+            translation,
+            output_dir=None,
+            data_dir=self.data_dir,
+            overwrite=overwrite,
+            progress=progress,
+        )

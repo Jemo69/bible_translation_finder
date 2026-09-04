@@ -4,13 +4,13 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "bible_translation_finder"
-version = "0.2.0"
-description = "Find Bible verses and convert Bible translations to OpenSong XML — a library for API servers, GUIs, and TUIs"
+version = "0.3.0"
+description = "Download Bible translations as OpenSong XML for use in FreeShow, OpenSong, and other lyrics-display software"
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
 authors = [{ name = "Jemo69" }]
-keywords = ["bible", "scripture", "opensong", "translations", "verse"]
+keywords = ["bible", "scripture", "opensong", "freeshow", "translations", "lyrics", "worship"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
@@ -22,6 +22,7 @@ classifiers = [
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Topic :: Religion",
+    "Topic :: Multimedia :: Sound/Audio :: Presentation",
     "Topic :: Software Development :: Libraries :: Python Modules",
     "Typing :: Typed",
 ]
