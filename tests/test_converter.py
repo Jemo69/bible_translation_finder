@@ -70,3 +70,19 @@ def test_real_usfx_file():
     out = converter.convert_to_opensong(p.read_text(encoding="utf-8"), "usfx")
     root = ET.fromstring(out)
     assert len(root.findall("b")) == 66
+
+
+def test_usfx_direct_children_without_paragraph():
+    usfx = """<?xml version="1.0" encoding="UTF-8"?>
+<usfx><book id="MAT"><c id="1"/><v id="1"/>The book of the generation of Jesus Christ.<ve/>
+<v id="2"/>Abraham begat Isaac.<ve/></book></usfx>"""
+    out = converter.convert_to_opensong(usfx, "usfx")
+    assert out is not None
+    root = ET.fromstring(out)
+    books = root.findall("b")
+    assert len(books) == 1 and books[0].get("name") == "Matthew"
+    verses = books[0].findall("c")[0].findall("v")
+    assert len(verses) == 2
+    assert verses[0].text == "The book of the generation of Jesus Christ."
+    assert verses[1].text == "Abraham begat Isaac."
+

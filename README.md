@@ -7,8 +7,22 @@ pip install bible_translation_finder
 ```
 
 ```python
-import btf
+import btf  # or: import btm
 
+# --- Verse Lookup & Scripture Search ---
+print(btf.get_verse("John 3:16").text)
+print(btf.get_passage("Ps 23:1-3", translation="WEB").text)
+
+for hit in btf.find("everlasting", translation="KJV", limit=5):
+    print(hit.reference, "-", hit.text)
+
+# Hold a Bible open in memory & export to OpenSong XML
+bible = btf.load("KOUGO")                      # Japanese Colloquial Version
+print(bible.get_verse("John", 3, 16).text)
+xml_content = bible.to_opensong_xml()          # get XML string directly
+bible.save("./bibles/kougo.xml")               # or save to file
+
+# --- Download OpenSong XML Files ---
 # List the 98 translations in the curated catalog
 btf.list_translations()                         # freely available
 btf.list_translations(include_copyrighted=True) # all 98
@@ -24,6 +38,9 @@ btf.download("LSG", output_dir="./bibles")       # Louis Segond 1910
 
 # Download many at once
 btf.batch(["KJV", "WEB", "LSG", "KOUGO"], output_dir="./bibles")
+
+# Or fetch XML in memory without writing to disk
+xml = btf.fetch_xml("KJV")
 
 # Or use a managed data directory
 lib = btf.Library()                             # ~/.local/share/bible-translation-finder
@@ -53,6 +70,9 @@ Requires Python 3.10+.
 ## CLI
 
 ```bash
+btm get "John 3:16"               # lookup verse (default: KJV)
+btm get "Ps 23:1-3" -t WEB        # lookup passage with specific translation
+btm find "love" -t KJV --limit 10 # search verse text
 btm list                          # freely available translations
 btm list --all                    # include copyrighted stubs
 btm search japanese               # local catalog + eBible.org

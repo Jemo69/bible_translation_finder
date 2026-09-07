@@ -67,6 +67,45 @@ def cmd_search(args):
     print(format_table(rows, ["ID", "Title", "Language", "Copyright"]))
 
 
+def cmd_get(args):
+    """Print one passage: btm get "John 3:16" --translation KJV."""
+    lib = Library(getattr(args, "data_dir", None) or default_data_dir())
+    try:
+        bible = lib.load(args.translation)
+    except (KeyError, FileNotFoundError) as e:
+        print(e)
+        return
+    try:
+        passage = bible.get_passage(args.reference)
+    except (ValueError, KeyError) as e:
+        print(f"Error: {e}")
+        return
+    print(f"{passage.reference} ({bible.translation})")
+    for v in passage.verses:
+        print(f"{v.verse} {v.text}")
+
+
+def cmd_find(args):
+    """Search verse texts: btm find love --translation WEB --limit 10."""
+    lib = Library(getattr(args, "data_dir", None) or default_data_dir())
+    try:
+        bible = lib.load(args.translation)
+    except (KeyError, FileNotFoundError) as e:
+        print(e)
+        return
+    try:
+        hits = bible.search(args.query, limit=args.limit)
+    except ValueError as e:
+        print(f"Error: {e}")
+        return
+    if not hits:
+        print("No matches found.")
+        return
+    print(f"Found {len(hits)} match(es) in {bible.translation}:")
+    for v in hits:
+        print(f"  {v.reference} — {v.text[:160]}")
+
+
 def cmd_download(args):
     output_dir = args.output
     try:
@@ -155,6 +194,15 @@ def run_cli():
     p_search = sub.add_parser("search", help="Search for translations (local catalog + eBible.org)")
     p_search.add_argument("query", help="Search query (translation name, language, or ID)")
 
+    p_get = sub.add_parser("get", help='Look up a passage, e.g. btm get "John 3:16"')
+    p_get.add_argument("reference", help='Bible reference, e.g. "John 3:16", "Ps 23:1-3"')
+    p_get.add_argument("-t", "--translation", default="KJV", help="Translation abbreviation or id (default: KJV)")
+
+    p_find = sub.add_parser("find", help="Search verse text, e.g. btm find love --translation WEB")
+    p_find.add_argument("query", help="Text to search for")
+    p_find.add_argument("-t", "--translation", default="KJV", help="Translation abbreviation or id (default: KJV)")
+    p_find.add_argument("--limit", type=int, default=20, help="Maximum matches (default: 20)")
+
     p_download = sub.add_parser("download", help="Download a specific translation to a directory")
     p_download.add_argument("translation_id", help="Translation ID or abbreviation (e.g. 'KJV', 'eng-web')")
     p_download.add_argument("-o", "--output", default=".", help="Output directory (default: current directory)")
@@ -175,6 +223,10 @@ def run_cli():
         cmd_list(args)
     elif args.command == "search":
         cmd_search(args)
+    elif args.command == "get":
+        cmd_get(args)
+    elif args.command == "find":
+        cmd_find(args)
     elif args.command == "download":
         cmd_download(args)
     elif args.command == "batch":

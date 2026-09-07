@@ -271,8 +271,13 @@ def _extract_usfx_book(book_elem: ET.Element) -> dict:
         pass
     for child in list(book_elem):
         _walk(child, False)
-        # Tail of top-level children outside any verse is ignored unless
-        # we are inside a verse (handled inside _walk via child.tail).
+        if (
+            not (_local(child.tag) in SKIP_TAGS)
+            and current_chapter is not None
+            and current_verse is not None
+            and child.tail
+        ):
+            parts.append(child.tail)
     _flush()
     # Drop empty chapters (e.g. front-matter <c> with no verses)
     return {c: v for c, v in chapters.items() if v}

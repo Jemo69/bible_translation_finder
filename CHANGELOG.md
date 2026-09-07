@@ -2,16 +2,15 @@
 
 ## v0.3.0
 
-Tightened the package to its real purpose: downloading and converting Bible
-translations to OpenSong XML. The earlier verse-lookup and search helpers
-(`btm.get_verse`, `btm.find`, `Bible`/`Passage`/`Verse`/`Reference`) are gone.
+Brings together full Scripture querying/lookup capabilities with the OpenSong XML download and conversion pipeline.
 
-- New top-level API: `btf.download(id, output_dir=...)`, `btf.batch(ids, ...)`,
-  `btf.Library`, `btf.list_translations`, `btf.find_translations`
-- New CLI: `btm download`, `btm batch`, `btm downloaded`, plus a
-  `--data-dir` global flag and a `download` subcommand that defaults to the
-  current directory (so you can pipe straight into your FreeShow folder)
-- `batch` with no `--ids` now downloads every freely available translation
+- **Restored verse lookup & query API**: `get_verse()`, `get_passage()`, `get_chapter()`, `load()`, and domain classes (`Bible`, `Passage`, `Verse`, `Reference`).
+- **Restored full-text search**: `find()` / `search()`.
+- **Restored CLI query commands**: `btm get <ref>` and `btm find <query>`.
+- **OpenSong XML export & download**: `download()`, `batch()`, `fetch_xml()`, `Bible.to_opensong_xml()`, `Bible.save()`, and CLI `btm download` / `btm batch` / `btm downloaded`.
+- **Dual module support**: Both `import btf` and `import btm` are supported.
+- **USFX converter fix**: Handles direct book children without `<p>` wrappers (e.g. Cherokee New Testament).
+
 
 ## v0.2.0
 

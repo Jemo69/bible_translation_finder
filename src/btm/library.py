@@ -191,6 +191,7 @@ class Library:
     def __init__(self, data_dir: Optional[Union[Path, str]] = None):
         self.data_dir = Path(data_dir).expanduser() if data_dir else default_data_dir()
         self.data_dir.mkdir(parents=True, exist_ok=True)
+        self._cache: dict[str, object] = {}
 
     # -- catalog ------------------------------------------------------
     def list_translations(self, include_copyrighted: bool = True) -> list[dict]:
@@ -242,6 +243,8 @@ class Library:
         progress: bool = True,
     ) -> Path:
         """Download ``translation`` to this library's data_dir and return its path."""
+        t = self.resolve(translation)
+        self._cache.pop(t["id"], None)
         return download(
             translation,
             output_dir=None,
@@ -249,3 +252,49 @@ class Library:
             overwrite=overwrite,
             progress=progress,
         )
+
+    # -- loading ------------------------------------------------------
+    def load(self, translation: str = "KJV", download: bool = True):
+        """Load a translation as a :class:`Bible` (cached in memory).
+
+        Downloads it first unless ``download=False``.
+        """
+        from .bible import Bible
+
+        t = self.resolve(translation)
+        if t["id"] in self._cache:
+            return self._cache[t["id"]]
+        path = self.data_dir / translation_filename(t)
+        if not path.exists():
+            if not download:
+                raise FileNotFoundError(
+                    f"{t['abbreviation']} is not cached at {path}. "
+                    f"Call Library().download({t['abbreviation']!r}) first."
+                )
+            path = self.download(t["abbreviation"])
+        bible = Bible.from_file(path, translation=t["abbreviation"], name=t["name"])
+        self._cache[t["id"]] = bible
+        return bible
+
+    def load_file(self, path: Union[Path, str], translation: str = ""):
+        """Load any OpenSong XML file directly (no catalog needed)."""
+        from .bible import Bible
+
+        return Bible.from_file(path, translation=translation)
+
+    def clear_cache(self) -> None:
+        self._cache.clear()
+
+
+# Shared default library for top-level convenience functions.
+_default_library: Optional[Library] = None
+
+
+def get_library(data_dir: Optional[Union[Path, str]] = None) -> Library:
+    global _default_library
+    if data_dir is not None:
+        return Library(data_dir)
+    if _default_library is None:
+        _default_library = Library()
+    return _default_library
+
