@@ -153,4 +153,45 @@ def test_btf_import_alias():
     assert hasattr(btf, "download")
     assert hasattr(btf, "fetch_xml")
     assert hasattr(btf, "Library")
+    assert hasattr(btf, "downloaded")
+    assert hasattr(btf, "is_downloaded")
+    assert hasattr(btf, "file_for")
+    assert hasattr(btf, "format_table")
+    assert hasattr(btf, "search_translations")
+
+
+def test_library_all_features(tmp_path):
+    import btm
+    lib = btm.Library(tmp_path)
+    # Test batch default downloads
+    p = lib.download("KJV")
+    assert p.exists()
+    assert lib.is_downloaded("KJV")
+    assert lib.file_for("KJV") == p
+    assert any(t["abbreviation"] == "KJV" for t in lib.downloaded())
+    # Test query methods on lib
+    v = lib.get_verse("Genesis 1:1", translation="KJV")
+    assert v.reference == "Genesis 1:1"
+    passg = lib.get_passage("Genesis 1:1-2", translation="KJV")
+    assert len(passg) == 2
+    ch = lib.get_chapter("Genesis", 1, translation="KJV")
+    assert len(ch) > 10
+    hits = lib.find("God", translation="KJV", limit=3)
+    assert len(hits) == 3
+    xml = lib.fetch_xml("KJV")
+    assert "<bible>" in xml
+    search_res = lib.search_translations("japanese")
+    assert len(search_res) >= 1
+
+
+def test_top_level_cli_parity_helpers(tmp_path):
+    import btm
+    p = btm.download("KJV", data_dir=tmp_path)
+    assert btm.is_downloaded("KJV", data_dir=tmp_path)
+    assert btm.file_for("KJV", data_dir=tmp_path) == p
+    have = btm.downloaded(data_dir=tmp_path)
+    assert any(t["abbreviation"] == "KJV" for t in have)
+    tbl = btm.format_table([["KJV", "King James"]], ["Abbrev", "Name"])
+    assert "KJV" in tbl and "King James" in tbl
+
 

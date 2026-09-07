@@ -39,17 +39,24 @@ from .catalog import (
     list_languages,
     search_catalog,
 )
-from .cli import run_cli
+from .cli import format_table, run_cli
 from .converter import BIBLE_BOOKS, convert_to_opensong
 from .library import (
     Library,
     batch,
     default_data_dir,
     download,
+    downloaded,
     fetch_xml,
+    file_for,
     get_library,
+    is_downloaded,
+    search_ebible,
+    search_translations,
 )
 from .reference import Reference, normalize_book_name, parse_reference
+
+search_ebible_catalog = search_ebible
 
 __all__ = [
     "Bible",
@@ -63,6 +70,9 @@ __all__ = [
     "download",
     "batch",
     "fetch_xml",
+    "downloaded",
+    "is_downloaded",
+    "file_for",
     "load",
     "get_verse",
     "get_passage",
@@ -78,9 +88,13 @@ __all__ = [
     "get_freely_available",
     "get_copyrighted",
     "search_catalog",
+    "search_ebible",
+    "search_ebible_catalog",
+    "search_translations",
     "normalize_book_name",
     "parse_reference",
     "convert_to_opensong",
+    "format_table",
     "run_cli",
 ]
 

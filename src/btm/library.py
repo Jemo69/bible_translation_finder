@@ -160,13 +160,19 @@ def download(
 
 
 def batch(
-    translations: list[str],
+    translations: Optional[list[str]] = None,
     output_dir: Optional[Union[Path, str]] = None,
     data_dir: Optional[Union[Path, str]] = None,
     overwrite: bool = False,
     progress: bool = True,
 ) -> list[Path]:
-    """Download several translations; returns the list of written file paths."""
+    """Download several translations; returns the list of written file paths.
+
+    When ``translations`` is None or omitted, every freely available translation
+    in the curated catalog is downloaded.
+    """
+    if translations is None:
+        translations = [t["abbreviation"] for t in _catalog.get_freely_available()]
     paths: list[Path] = []
     for tid in translations:
         try:
@@ -282,6 +288,73 @@ class Library:
 
         return Bible.from_file(path, translation=translation)
 
+    def batch(
+        self,
+        translations: Optional[list[str]] = None,
+        output_dir: Optional[Union[Path, str]] = None,
+        overwrite: bool = False,
+        progress: bool = True,
+    ) -> list[Path]:
+        """Download multiple translations into this library (or output_dir)."""
+        return batch(
+            translations=translations,
+            output_dir=output_dir,
+            data_dir=self.data_dir if output_dir is None else None,
+            overwrite=overwrite,
+            progress=progress,
+        )
+
+    def fetch_xml(self, translation: str) -> str:
+        """Return the OpenSong XML for ``translation`` as a string."""
+        return fetch_xml(translation)
+
+    def get_verse(self, reference: str, translation: str = "KJV"):
+        """Look up a single verse in this library."""
+        bible = self.load(translation)
+        from .reference import parse_reference
+
+        ref = parse_reference(reference)
+        if ref.chapter is None:
+            raise ValueError(
+                f"{reference!r} names a whole book; use get_passage() instead."
+            )
+        if ref.verse_start is None:
+            raise ValueError(
+                f"{reference!r} names a whole chapter; use get_chapter() or get_passage()."
+            )
+        return bible.get_verse(ref.book, ref.chapter, ref.verse_start)
+
+    def get_passage(self, reference: str, translation: str = "KJV"):
+        """Return all verses for ``reference`` in this library."""
+        return self.load(translation).get_passage(reference)
+
+    def get_chapter(self, book: str, chapter: int, translation: str = "KJV"):
+        """Return every verse in ``book``/``chapter`` in this library."""
+        return self.load(translation).get_chapter(book, chapter)
+
+    def find(self, query: str, translation: str = "KJV", limit: int = 50):
+        """Full-text search for ``query`` in this library."""
+        return self.load(translation).search(query, limit=limit)
+
+    search = find
+
+    def search_ebible(self, query: str = "", language: str = "") -> list[dict]:
+        """Search the live eBible.org catalog."""
+        return _scraper.search_ebible_catalog(query=query, language=language)
+
+    def search_translations(
+        self, query: str = "", language: str = "", include_ebible: bool = False
+    ) -> list[dict]:
+        """Search translations across local catalog and optionally eBible.org."""
+        local = self.find_translations(query=query, language=language)
+        if not include_ebible:
+            return local
+        try:
+            ebible_results = self.search_ebible(query=query, language=language)
+        except Exception:
+            ebible_results = []
+        return local + ebible_results
+
     def clear_cache(self) -> None:
         self._cache.clear()
 
@@ -297,4 +370,38 @@ def get_library(data_dir: Optional[Union[Path, str]] = None) -> Library:
     if _default_library is None:
         _default_library = Library()
     return _default_library
+
+
+def downloaded(data_dir: Optional[Union[Path, str]] = None) -> list[dict]:
+    """Catalog entries that have a cached XML file in the data directory."""
+    return get_library(data_dir).downloaded()
+
+
+def is_downloaded(
+    translation: str, data_dir: Optional[Union[Path, str]] = None
+) -> bool:
+    """Return True if ``translation`` is already cached locally."""
+    return get_library(data_dir).is_downloaded(translation)
+
+
+def file_for(
+    translation: str, data_dir: Optional[Union[Path, str]] = None
+) -> Path:
+    """Return the cached OpenSong XML Path for ``translation``."""
+    return get_library(data_dir).file_for(translation)
+
+
+def search_ebible(query: str = "", language: str = "") -> list[dict]:
+    """Search the online eBible.org catalog (1,500+ translations)."""
+    return _scraper.search_ebible_catalog(query=query, language=language)
+
+
+def search_translations(
+    query: str = "", language: str = "", include_ebible: bool = False
+) -> list[dict]:
+    """Search translations across curated local catalog and optionally eBible.org."""
+    return get_library().search_translations(
+        query=query, language=language, include_ebible=include_ebible
+    )
+
 
