@@ -176,7 +176,7 @@ def convert_usfx_to_opensong(xml_content: str) -> Optional[str]:
         if bname in books_data:
             chapters = books_data[bname]
             book_num = BIBLE_BOOKS.index(bname) + 1
-            b = ET.SubElement(root_os, "b", {"n": str(book_num), "name": bname})
+            b = ET.SubElement(root_os, "b", {"n": bname, "name": bname, "num": str(book_num)})
             for cnum in sorted(chapters.keys(), key=_safe_sort_key):
                 c = ET.SubElement(b, "c", {"n": str(cnum)})
                 verses = chapters[cnum]
@@ -321,7 +321,7 @@ def convert_zefania_to_opensong(xml_content: str) -> Optional[str]:
         if bname in books_data:
             chapters = books_data[bname]
             book_num = BIBLE_BOOKS.index(bname) + 1 if bname in BIBLE_BOOKS else 0
-            b = ET.SubElement(root_os, "b", {"n": str(book_num), "name": bname})
+            b = ET.SubElement(root_os, "b", {"n": bname, "name": bname, "num": str(book_num)})
             for cnum in sorted(chapters.keys(), key=_safe_sort_key):
                 c = ET.SubElement(b, "c", {"n": str(cnum)})
                 verses = chapters[cnum]
@@ -473,7 +473,7 @@ def convert_osis_to_opensong(xml_content: str) -> Optional[str]:
         if bname in books_data:
             chapters = books_data[bname]
             book_num = BIBLE_BOOKS.index(bname) + 1 if bname in BIBLE_BOOKS else 0
-            b = ET.SubElement(root_os, "b", {"n": str(book_num), "name": bname})
+            b = ET.SubElement(root_os, "b", {"n": bname, "name": bname, "num": str(book_num)})
             for cnum in sorted(chapters.keys(), key=_safe_sort_key):
                 c = ET.SubElement(b, "c", {"n": str(cnum)})
                 verses = chapters[cnum]

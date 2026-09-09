@@ -15,7 +15,7 @@ import requests
 from bs4 import BeautifulSoup
 
 EBIBLE_TRANSLATIONS_CSV = "https://ebible.org/Scriptures/translations.csv"
-EBIBLE_USFX_PATTERN = "https://ebible.org/{trans_id}/{trans_id}_usfx.zip"
+EBIBLE_USFX_PATTERN = "https://eBible.org/Scriptures/{trans_id}_usfx.zip"
 OPEN_BIBLES_RAW = "https://raw.githubusercontent.com/seven1m/open-bibles/master/{filename}"
 
 
@@ -97,15 +97,22 @@ def download_open_bibles(filename: str) -> Optional[str]:
 
 def get_ebible_translation_details(translation_id: str) -> Optional[dict]:
     catalog = fetch_ebible_catalog()
+    tid_clean = translation_id.strip().lower()
     for entry in catalog:
         eid = entry.get("translationId", "")
-        if eid == translation_id:
+        if eid.lower() == tid_clean or eid.lower().replace("-", "_") == tid_clean.replace("-", "_"):
             return {
                 "id": eid,
+                "abbreviation": eid.upper(),
+                "name": entry.get("title", "") or entry.get("English Title", eid),
                 "language": entry.get("languageName", ""),
-                "title": entry.get("title", ""),
+                "language_english": entry.get("languageNameInEnglish", ""),
+                "language_code": entry.get("languageCode", ""),
                 "copyright": entry.get("Copyright", ""),
-                "redistributable": entry.get("Redistributable", "").strip() == "True",
+                "freely_available": entry.get("Redistributable", "").strip() == "True",
+                "source_url": EBIBLE_USFX_PATTERN.format(trans_id=eid),
+                "source_format": "usfx",
+                "source_type": "ebible",
             }
     return None
 

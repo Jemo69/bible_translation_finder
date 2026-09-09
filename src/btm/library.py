@@ -60,7 +60,28 @@ def default_data_dir() -> Path:
 
 
 def translation_filename(t: dict) -> str:
-    return f"{t['abbreviation'].lower()}_{t['id'].replace('-', '_')}.xml"
+    abbrev = (t.get("abbreviation") or t.get("id") or "bible").lower()
+    tid = (t.get("id") or abbrev).replace("-", "_").replace(" ", "_")
+    return f"{abbrev}_{tid}.xml"
+
+
+def _resolve_translation(translation: Union[str, dict]) -> dict:
+    if isinstance(translation, dict):
+        return translation
+    t = _catalog.get_by_abbreviation(translation)
+    if t is not None:
+        return t
+    key = translation.strip().lower()
+    for entry in _catalog.get_catalog():
+        if entry.get("id", "").lower() == key or entry.get("abbreviation", "").lower() == key:
+            return entry
+    eb = _scraper.get_ebible_translation_details(translation)
+    if eb is not None:
+        return eb
+    raise KeyError(
+        f"Unknown translation: {translation!r}. "
+        "Use list_translations() or find_translations() to browse what is available."
+    )
 
 
 def _fetch_opensong_xml(t: dict) -> Optional[str]:
@@ -79,26 +100,21 @@ def _fetch_opensong_xml(t: dict) -> Optional[str]:
     elif source_type == "ebible" and source_url:
         raw = _scraper.download_ebible_usfx(source_url)
     else:
-        raise ValueError(f"No download method for {t['abbreviation']}")
+        raise ValueError(f"No download method for {t.get('abbreviation', t.get('id', 'unknown'))}")
     if not raw:
         return None
     return _converter.convert_to_opensong(raw, source_format)
 
 
-def fetch_xml(translation: str) -> str:
+def fetch_xml(translation: Union[str, dict]) -> str:
     """Return the OpenSong XML for ``translation`` as a string (no disk write).
 
     Useful when you want to stream the XML into another pipeline (e.g. load
     it directly into FreeShow's stage-display plugin) without touching the
     filesystem.
     """
-    t = _catalog.get_by_abbreviation(translation)
-    if t is None:
-        raise KeyError(
-            f"Unknown translation: {translation!r}. "
-            "Use list_translations() or find_translations() to browse what is available."
-        )
-    if not t["freely_available"]:
+    t = _resolve_translation(translation)
+    if not t.get("freely_available", True):
         return _make_stub(t)
     xml = _fetch_opensong_xml(t)
     if not xml:
@@ -107,7 +123,7 @@ def fetch_xml(translation: str) -> str:
 
 
 def download(
-    translation: str,
+    translation: Union[str, dict],
     output_dir: Optional[Union[Path, str]] = None,
     data_dir: Optional[Union[Path, str]] = None,
     overwrite: bool = False,
@@ -119,12 +135,7 @@ def download(
     library's ``data_dir`` is used (so the translation is available to
     :class:`Library` afterwards).
     """
-    t = _catalog.get_by_abbreviation(translation)
-    if t is None:
-        raise KeyError(
-            f"Unknown translation: {translation!r}. "
-            "Use list_translations() or find_translations() to browse what is available."
-        )
+    t = _resolve_translation(translation)
     if data_dir is None:
         data_dir = default_data_dir() if output_dir is None else None
     if data_dir is not None:
@@ -212,21 +223,25 @@ class Library:
     def languages(self) -> list[str]:
         return _catalog.list_languages()
 
-    def resolve(self, translation: str) -> dict:
-        t = _catalog.get_by_abbreviation(translation)
-        if t is None:
-            raise KeyError(
-                f"Unknown translation: {translation!r}. "
-                "Use Library().find_translations() to browse what is available."
-            )
-        return t
+    def resolve(self, translation: Union[str, dict]) -> dict:
+        return _resolve_translation(translation)
 
     # -- local files --------------------------------------------------
-    def file_for(self, translation: str) -> Path:
+    def file_for(self, translation: Union[str, dict]) -> Path:
+        if isinstance(translation, (Path, str)) and str(translation).endswith(".xml") and Path(translation).exists():
+            return Path(translation)
         t = self.resolve(translation)
-        return self.data_dir / translation_filename(t)
+        expected = self.data_dir / translation_filename(t)
+        if expected.exists():
+            return expected
+        abbrev = (t.get("abbreviation") or "").lower()
+        if abbrev:
+            for cand in (self.data_dir / f"{abbrev}.xml", self.data_dir / f"{abbrev.upper()}.xml"):
+                if cand.exists():
+                    return cand
+        return expected
 
-    def is_downloaded(self, translation: str) -> bool:
+    def is_downloaded(self, translation: Union[str, dict]) -> bool:
         try:
             return self.file_for(translation).exists()
         except KeyError:
@@ -234,12 +249,35 @@ class Library:
 
     def downloaded(self) -> list[dict]:
         have = []
+        seen_paths = set()
         for t in _catalog.get_catalog():
-            if (self.data_dir / translation_filename(t)).exists():
+            fn = self.data_dir / translation_filename(t)
+            if fn.exists():
                 have.append(t)
+                seen_paths.add(fn.resolve())
+            else:
+                abbrev = (t.get("abbreviation") or "").lower()
+                if abbrev:
+                    for cand in (self.data_dir / f"{abbrev}.xml", self.data_dir / f"{abbrev.upper()}.xml"):
+                        if cand.exists():
+                            have.append(t)
+                            seen_paths.add(cand.resolve())
+                            break
+        for p in self.data_dir.glob("*.xml"):
+            if p.resolve() in seen_paths:
+                continue
+            have.append({
+                "id": p.stem.lower(),
+                "abbreviation": p.stem.split("_")[0].upper() if "_" in p.stem else p.stem[:6].upper(),
+                "name": p.stem.replace("_", " ").title(),
+                "language": "Local",
+                "freely_available": True,
+                "path": p,
+                "popularity_rank": 100,
+            })
         return sorted(have, key=lambda t: t.get("popularity_rank", 99))
 
-    def path(self, translation: str) -> Path:
+    def path(self, translation: Union[str, dict]) -> Path:
         return self.file_for(translation)
 
     def download(
@@ -403,5 +441,160 @@ def search_translations(
     return get_library().search_translations(
         query=query, language=language, include_ebible=include_ebible
     )
+
+
+def scan_local_bibles(
+    search_dirs: Optional[list[Union[Path, str]]] = None,
+) -> list[dict]:
+    """Scan local directories for OpenSong Bible XML files.
+
+    Returns a list of metadata dicts for all detected OpenSong XML files.
+    """
+    import xml.etree.ElementTree as ET
+
+    if search_dirs is None:
+        dirs_to_check = [
+            default_data_dir(),
+            Path.home() / "Downloads",
+            Path.home() / "projects" / "bible-translations",
+        ]
+    else:
+        dirs_to_check = [Path(d).expanduser() for d in search_dirs]
+
+    found: list[dict] = []
+    seen_paths: set[Path] = set()
+
+    for base_dir in dirs_to_check:
+        base = Path(base_dir).expanduser()
+        if not base.exists() or not base.is_dir():
+            continue
+
+        for p in base.glob("**/*.xml"):
+            if not p.is_file():
+                continue
+            try:
+                resolved = p.resolve()
+            except Exception:
+                continue
+            if resolved in seen_paths:
+                continue
+            seen_paths.add(resolved)
+
+            try:
+                size = p.stat().st_size
+                if size < 200:
+                    continue
+                with open(p, "r", encoding="utf-8", errors="ignore") as f:
+                    header = f.read(2048)
+                if "<bible" not in header.lower() and "<xmlbible" not in header.lower() and "<usfx" not in header.lower():
+                    continue
+
+                tree = ET.parse(p)
+                root = tree.getroot()
+                tag_lower = root.tag.lower()
+                if "bible" not in tag_lower and "usfx" not in tag_lower and "xmlbible" not in tag_lower:
+                    continue
+
+                is_zefania = "xmlbible" in tag_lower
+                is_opensong = root.tag.lower() == "bible" and bool(root.findall("b") or root.findall(".//b"))
+
+                if is_opensong:
+                    b_elems = root.findall("b") or root.findall(".//b")
+                    book_count = len(b_elems)
+                    fmt = "opensong"
+                elif is_zefania:
+                    b_elems = root.findall("BIBLEBOOK") or root.findall(".//BIBLEBOOK")
+                    book_count = len(b_elems)
+                    fmt = "zefania"
+                else:
+                    b_elems = root.findall(".//book") or []
+                    book_count = len(b_elems)
+                    fmt = "usfx" if "usfx" in tag_lower else "xml"
+
+                name = root.get("biblename") or root.get("name") or root.get("title") or ""
+                if not name:
+                    name = p.stem.replace("_", " ").title()
+
+                abbrev = p.stem.split("_")[0].upper() if "_" in p.stem else p.stem[:6].upper()
+
+                is_stub = False
+                if is_opensong and b_elems:
+                    first_v = b_elems[0].find(".//v")
+                    if first_v is not None and first_v.text and "[Placeholder" in first_v.text:
+                        is_stub = True
+
+                found.append({
+                    "id": p.stem.lower(),
+                    "abbreviation": abbrev,
+                    "name": name,
+                    "language": "Local File",
+                    "path": p,
+                    "size_bytes": size,
+                    "book_count": book_count,
+                    "format": fmt,
+                    "is_opensong": is_opensong,
+                    "freely_available": True,
+                    "is_stub": is_stub,
+                    "is_local": True,
+                })
+            except Exception:
+                continue
+
+    return sorted(found, key=lambda x: str(x["name"]))
+
+
+def convert_local_bible(
+    source_path: Union[Path, str],
+    output_dir: Optional[Union[Path, str]] = None,
+    output_filename: Optional[str] = None,
+) -> Path:
+    """Convert a local Bible XML file (Zefania, OSIS, USFX, or OpenSong) to standard OpenSong format."""
+    import xml.etree.ElementTree as ET
+
+    src = Path(source_path).expanduser().resolve()
+    if not src.exists():
+        raise FileNotFoundError(f"Source Bible file does not exist: {src}")
+
+    dest_dir = Path(output_dir).expanduser() if output_dir else default_data_dir()
+    dest_dir.mkdir(parents=True, exist_ok=True)
+
+    content = src.read_text(encoding="utf-8", errors="ignore")
+    tree = ET.fromstring(content)
+    tag_lower = tree.tag.lower()
+
+    if tag_lower == "bible" and bool(tree.findall("b")):
+        # Already OpenSong format!
+        out_name = output_filename or f"{src.stem.lower()}_opensong.xml"
+        dest = dest_dir / out_name
+        if dest.resolve() != src.resolve():
+            dest.write_text(content, encoding="utf-8")
+        return dest
+    elif "xmlbible" in tag_lower:
+        opensong_xml = _converter.convert_zefania_to_opensong(content)
+        if not opensong_xml:
+            raise ValueError(f"Failed to convert Zefania XML file {src.name}")
+        abbrev = src.stem.split("_")[0].lower()
+        out_name = output_filename or f"{abbrev}_{src.stem.lower()}.xml"
+        dest = dest_dir / out_name
+        dest.write_text('<?xml version="1.0" encoding="UTF-8"?>\n' + opensong_xml, encoding="utf-8")
+        return dest
+    elif "usfx" in tag_lower:
+        opensong_xml = _converter.convert_usfx_to_opensong(content)
+        if not opensong_xml:
+            raise ValueError(f"Failed to convert USFX XML file {src.name}")
+        out_name = output_filename or f"{src.stem.lower()}.xml"
+        dest = dest_dir / out_name
+        dest.write_text('<?xml version="1.0" encoding="UTF-8"?>\n' + opensong_xml, encoding="utf-8")
+        return dest
+    else:
+        opensong_xml = _converter.convert_osis_to_opensong(content)
+        if not opensong_xml:
+            raise ValueError(f"Failed to convert OSIS XML file {src.name}")
+        out_name = output_filename or f"{src.stem.lower()}.xml"
+        dest = dest_dir / out_name
+        dest.write_text('<?xml version="1.0" encoding="UTF-8"?>\n' + opensong_xml, encoding="utf-8")
+        return dest
+
+
 
 

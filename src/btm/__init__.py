@@ -51,6 +51,8 @@ from .library import (
     file_for,
     get_library,
     is_downloaded,
+    scan_local_bibles,
+    convert_local_bible,
     search_ebible,
     search_translations,
 )
@@ -73,7 +75,10 @@ __all__ = [
     "downloaded",
     "is_downloaded",
     "file_for",
+    "scan_local_bibles",
+    "convert_local_bible",
     "load",
+    "load_file",
     "get_verse",
     "get_passage",
     "get_chapter",
@@ -98,12 +103,17 @@ __all__ = [
     "run_cli",
 ]
 
-__version__ = "0.3.0"
+__version__ = "0.3.1"
 
 
 def load(translation: str = "KJV", data_dir=None) -> Bible:
     """Load a translation for repeated queries (downloads on first use)."""
     return get_library(data_dir).load(translation)
+
+
+def load_file(path, translation: str = "") -> Bible:
+    """Load an OpenSong Bible XML file directly."""
+    return get_library().load_file(path, translation=translation)
 
 
 def get_verse(reference: str, translation: str = "KJV", data_dir=None) -> Verse:

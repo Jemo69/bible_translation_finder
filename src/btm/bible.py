@@ -362,7 +362,7 @@ class Bible:
         for bname in BIBLE_BOOKS:
             if bname in self._books:
                 book_num = BIBLE_BOOKS.index(bname) + 1
-                b = ET.SubElement(root, "b", {"n": str(book_num), "name": bname})
+                b = ET.SubElement(root, "b", {"n": bname, "name": bname, "num": str(book_num)})
                 chapters = self._books[bname]
                 for cnum in sorted(chapters.keys()):
                     c = ET.SubElement(b, "c", {"n": str(cnum)})
